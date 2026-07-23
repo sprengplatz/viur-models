@@ -1,0 +1,448 @@
+{
+  "active": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": true,
+    "descr": "Active",
+    "emptyvalue": false,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 8,
+    "type": "bool",
+    "unique": false,
+    "visible": true
+  },
+  "changedate": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "compute": {
+      "method": "OnWrite"
+    },
+    "date": true,
+    "descr": "updated at",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "naive": false,
+    "params": {},
+    "readonly": true,
+    "required": false,
+    "sortindex": 2,
+    "time": true,
+    "type": "date",
+    "unique": false,
+    "visible": false
+  },
+  "creationdate": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "compute": {
+      "method": "Once"
+    },
+    "date": true,
+    "descr": "created at",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "naive": false,
+    "params": {},
+    "readonly": true,
+    "required": false,
+    "sortindex": 1,
+    "time": true,
+    "type": "date",
+    "unique": false,
+    "visible": false
+  },
+  "due": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "date": true,
+    "descr": "Due",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "naive": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 12,
+    "time": false,
+    "type": "date",
+    "unique": false,
+    "visible": true
+  },
+  "email": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Email",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 17,
+    "type": "str.email",
+    "unique": false,
+    "visible": true
+  },
+  "factor": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "decimal": false,
+    "defaultvalue": 1.5,
+    "descr": "Factor",
+    "emptyvalue": 0,
+    "indexed": true,
+    "languages": null,
+    "max": 9223372036854775807,
+    "min": -9223372036854775806,
+    "multiple": false,
+    "params": {},
+    "precision": 8,
+    "readonly": false,
+    "required": false,
+    "sortindex": 7,
+    "type": "numeric",
+    "unique": false,
+    "visible": true
+  },
+  "key": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "descr": "Key",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "params": {},
+    "readonly": true,
+    "required": false,
+    "sortindex": 0,
+    "type": "key",
+    "unique": false,
+    "visible": false
+  },
+  "kind": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "descr": "Kind",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": true,
+    "sortindex": 9,
+    "type": "select",
+    "unique": false,
+    "values": {
+      "harsh_words": "Harsh Words",
+      "praise": "Praise"
+    },
+    "visible": true
+  },
+  "message": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Message",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 4,
+    "type": "text",
+    "unique": false,
+    "valid_html": null,
+    "visible": true
+  },
+  "mood": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "praise",
+    "descr": "Mood",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 10,
+    "type": "select",
+    "unique": false,
+    "values": {
+      "harsh_words": "Harsh Words",
+      "praise": "Praise"
+    },
+    "visible": true
+  },
+  "name": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "descr": "Name",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 100,
+    "minlength": 2,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": true,
+    "sortindex": 3,
+    "type": "str",
+    "unique": false,
+    "visible": true
+  },
+  "note": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "descr": "Note",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 20,
+    "type": "str",
+    "unique": false,
+    "visible": true
+  },
+  "optional_mail": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "descr": "Optional Mail",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 18,
+    "type": "str.email",
+    "unique": false,
+    "visible": true
+  },
+  "price": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "decimal": true,
+    "descr": "Price",
+    "emptyvalue": 0,
+    "indexed": true,
+    "languages": null,
+    "max": 9223372036854775807,
+    "min": -9223372036854775806,
+    "multiple": false,
+    "params": {},
+    "precision": 2,
+    "readonly": false,
+    "required": false,
+    "sortindex": 6,
+    "type": "numeric",
+    "unique": false,
+    "visible": true
+  },
+  "rating": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "decimal": false,
+    "descr": "Rating",
+    "emptyvalue": 0,
+    "indexed": true,
+    "languages": null,
+    "max": 5,
+    "min": 1,
+    "multiple": false,
+    "params": {},
+    "precision": 0,
+    "readonly": false,
+    "required": true,
+    "sortindex": 5,
+    "type": "numeric",
+    "unique": false,
+    "visible": true
+  },
+  "secret": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Secret",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": true,
+    "required": false,
+    "sortindex": 14,
+    "type": "str",
+    "unique": false,
+    "visible": false
+  },
+  "slot": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "date": false,
+    "descr": "Slot",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "naive": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 13,
+    "time": true,
+    "type": "date",
+    "unique": false,
+    "visible": true
+  },
+  "slug": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Slug",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "pattern": "^[a-z-]+$",
+    "readonly": false,
+    "required": false,
+    "sortindex": 19,
+    "type": "str.slug",
+    "unique": false,
+    "visible": true
+  },
+  "status": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "descr": "Status",
+    "emptyvalue": null,
+    "indexed": true,
+    "languages": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 11,
+    "type": "select",
+    "unique": false,
+    "values": {
+      "done": "Fertig",
+      "new": "Neu"
+    },
+    "visible": true
+  },
+  "tagged": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Tagged",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 21,
+    "type": "str",
+    "unique": false,
+    "visible": true
+  },
+  "titled": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Custom Title",
+    "emptyvalue": "",
+    "indexed": true,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 16,
+    "type": "str",
+    "unique": false,
+    "visible": true
+  },
+  "unindexed": {
+    "clone_behavior": {
+      "strategy": "copy_value"
+    },
+    "defaultvalue": "",
+    "descr": "Unindexed",
+    "emptyvalue": "",
+    "indexed": false,
+    "languages": null,
+    "maxlength": 254,
+    "minlength": null,
+    "multiple": false,
+    "params": {},
+    "readonly": false,
+    "required": false,
+    "sortindex": 15,
+    "type": "str",
+    "unique": false,
+    "visible": true
+  }
+}
