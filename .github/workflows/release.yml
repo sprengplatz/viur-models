@@ -52,7 +52,8 @@ jobs:
       - name: Compare
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(python -c "import re; t=open('src/viur/models/__init__.py').read(); print(re.search(r'__version__ = [\"\\'']([^\"\\'']+)[\"\\'']', t).group(1))")
+          PKG=$(sed -nE 's/^__version__ = "([^"]+)"$/\1/p' src/viur/models/__init__.py)
+          test -n "$PKG" || { echo "::error::__version__ not found in src/viur/models/__init__.py"; exit 1; }
           echo "Tag version:     $TAG"
           echo "Package version: $PKG"
           if [ "$TAG" != "$PKG" ]; then
