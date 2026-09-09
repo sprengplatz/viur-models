@@ -20,6 +20,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+# viur.core calls google.auth.default() at import (config.py, db/transport.py); without
+# Application Default Credentials — CI — that raises. Nothing here talks to Google, so
+# anonymous credentials and a dummy project satisfy the import. Must precede the first
+# viur.core import. (Twins: tests/conftest.py, docs/_hooks.py.)
+import google.auth
+from google.auth.credentials import AnonymousCredentials
+
+google.auth.default = lambda *args, **kwargs: (AnonymousCredentials(), "viur-models-test")
+
 # Fail fast (with a clear message) if this suite is run under viur-light-mock's
 # wholesale stand-in instead of the real core — e.g. invoked without
 # `-c integration/pytest.ini`, so the pytest11 plugin shadowed viur.core.

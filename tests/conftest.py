@@ -36,6 +36,15 @@ import pytest
 # server; ``setdefault`` leaves an explicitly set GAE_ENV alone.
 os.environ.setdefault("GAE_ENV", "localdev")
 
+# viur.core calls google.auth.default() at import (config.py, db/transport.py); without
+# Application Default Credentials — CI — that raises. Nothing here talks to Google, so
+# anonymous credentials and a dummy project satisfy the import. Must precede the first
+# viur.core import. (Twins: integration/conftest.py, docs/_hooks.py.)
+import google.auth
+from google.auth.credentials import AnonymousCredentials
+
+google.auth.default = lambda *args, **kwargs: (AnonymousCredentials(), "viur-models-test")
+
 
 def complete_errors_module(errors: types.ModuleType) -> list[str]:
     """Add error classes viur-core guarantees but the mock may lack.
