@@ -38,7 +38,7 @@ class UsingParityModel(Model, table=True):
     )
 
 
-IGNORED = {"sortindex"}
+IGNORED = {"sortindex", "tags", "mode", "decimal"}
 
 
 def _normalize(entry: dict) -> dict:

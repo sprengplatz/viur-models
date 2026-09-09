@@ -13,6 +13,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 8,
+    "tags": [],
     "type": "bool",
     "unique": false,
     "visible": true
@@ -35,6 +36,9 @@
     "readonly": true,
     "required": false,
     "sortindex": 2,
+    "tags": [
+      "technical"
+    ],
     "time": true,
     "type": "date",
     "unique": false,
@@ -58,6 +62,9 @@
     "readonly": true,
     "required": false,
     "sortindex": 1,
+    "tags": [
+      "technical"
+    ],
     "time": true,
     "type": "date",
     "unique": false,
@@ -78,6 +85,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 12,
+    "tags": [],
     "time": false,
     "type": "date",
     "unique": false,
@@ -99,6 +107,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 17,
+    "tags": [],
     "type": "str.email",
     "unique": false,
     "visible": true
@@ -121,6 +130,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 7,
+    "tags": [],
     "type": "numeric",
     "unique": false,
     "visible": true
@@ -138,6 +148,9 @@
     "readonly": true,
     "required": false,
     "sortindex": 0,
+    "tags": [
+      "technical"
+    ],
     "type": "key",
     "unique": false,
     "visible": false
@@ -155,6 +168,7 @@
     "readonly": false,
     "required": true,
     "sortindex": 9,
+    "tags": [],
     "type": "select",
     "unique": false,
     "values": {
@@ -177,6 +191,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 4,
+    "tags": [],
     "type": "text",
     "unique": false,
     "valid_html": null,
@@ -196,6 +211,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 10,
+    "tags": [],
     "type": "select",
     "unique": false,
     "values": {
@@ -219,6 +235,7 @@
     "readonly": false,
     "required": true,
     "sortindex": 3,
+    "tags": [],
     "type": "str",
     "unique": false,
     "visible": true
@@ -238,6 +255,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 20,
+    "tags": [],
     "type": "str",
     "unique": false,
     "visible": true
@@ -257,6 +275,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 18,
+    "tags": [],
     "type": "str.email",
     "unique": false,
     "visible": true
@@ -278,6 +297,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 6,
+    "tags": [],
     "type": "numeric",
     "unique": false,
     "visible": true
@@ -299,6 +319,7 @@
     "readonly": false,
     "required": true,
     "sortindex": 5,
+    "tags": [],
     "type": "numeric",
     "unique": false,
     "visible": true
@@ -319,6 +340,7 @@
     "readonly": true,
     "required": false,
     "sortindex": 14,
+    "tags": [],
     "type": "str",
     "unique": false,
     "visible": false
@@ -338,6 +360,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 13,
+    "tags": [],
     "time": true,
     "type": "date",
     "unique": false,
@@ -360,6 +383,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 19,
+    "tags": [],
     "type": "str.slug",
     "unique": false,
     "visible": true
@@ -377,6 +401,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 11,
+    "tags": [],
     "type": "select",
     "unique": false,
     "values": {
@@ -401,6 +426,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 21,
+    "tags": [],
     "type": "str",
     "unique": false,
     "visible": true
@@ -421,6 +447,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 16,
+    "tags": [],
     "type": "str",
     "unique": false,
     "visible": true
@@ -441,6 +468,7 @@
     "readonly": false,
     "required": false,
     "sortindex": 15,
+    "tags": [],
     "type": "str",
     "unique": false,
     "visible": true

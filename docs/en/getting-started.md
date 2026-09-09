@@ -95,19 +95,18 @@ overrides it with `StaticPool`. Both can be overridden through
 ## Development setup
 
 Unit suite — viur-light-mock **overlay mode** (real viur-core, in-memory
-datastore), 100 % coverage gate. `[overlay]` pins the core version; the
-stand-in mode lacks `viur.core.Module`, which `viur.models.sqllist` imports.
+datastore), 100 % coverage gate.
 
 ```bash
 pip install --no-deps -e .
-pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock[overlay]>=0.3,<1.0' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
+pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock>=0.3,<1.0' 'viur-core>=3.8,<3.9' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
 pytest
 ```
 
 Integration suite — real core without the mock (real skeleton registry):
 
 ```bash
-pip install "viur-core>=3.8,<4" rsa pytest 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
+pip install "viur-core>=3.8,<3.9" rsa pytest 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
 pip install --no-deps -e .
 python -m pytest -c integration/pytest.ini integration
 ```

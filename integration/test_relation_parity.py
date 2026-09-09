@@ -42,7 +42,7 @@ class RelParityModel(Model, table=True):
     fans: list[RelTarget] = Relationship(link_model=RelParityFanLink)
 
 
-IGNORED = {"sortindex"}
+IGNORED = {"sortindex", "tags", "mode", "decimal"}
 
 
 def _normalize(bone: dict) -> dict:

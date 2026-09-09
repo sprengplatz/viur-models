@@ -44,6 +44,7 @@ def Field(
     compute: dict | None = None,
     languages: t.Sequence[str] | None = None,
     format: str | None = None,
+    tags: str | t.Sequence[str] | None = None,
     schema_extra: dict | None = None,
     **kwargs: t.Any,
 ) -> t.Any:
@@ -59,6 +60,7 @@ def Field(
     :param compute: ``BaseBone.compute`` info, emitted verbatim.
     :param languages: Language codes of a ``Language[X]`` field (JSON column).
     :param format: Display format of record/relational bones, emitted verbatim.
+    :param tags: Classification tags (``BaseBone.tags``), emitted as a list.
     :param schema_extra: Extra ``FieldInfo`` kwargs, see ``ALLOWED_SCHEMA_EXTRA``.
     :param kwargs: Passed to ``sqlmodel.Field`` unchanged.
     """
@@ -74,6 +76,7 @@ def Field(
             "compute": compute,
             "languages": list(languages) if languages else None,
             "format": format,
+            "tags": ([tags] if isinstance(tags, str) else list(tags)) if tags else None,
         }.items()
         if value is not None
     }

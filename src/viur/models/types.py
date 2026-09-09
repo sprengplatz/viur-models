@@ -63,8 +63,10 @@ Raw = t.Annotated[str, BoneType("raw", replace=True)]
 Code = t.Annotated[str, BoneType("raw.code", replace=True, extras={"indexed": False})]
 """``CodeBone`` (``"raw.code"``), not indexed."""
 
-Color = t.Annotated[str, BoneType("color", replace=True)]
-"""``ColorBone`` (``"color"``)."""
+_COLOR_EXTRAS = {"mode": "rgb"}  # ColorBone default; other modes via a BoneType alias
+
+Color = t.Annotated[str, BoneType("color", replace=True, extras=dict(_COLOR_EXTRAS))]
+"""``ColorBone`` (``"color"``, ``mode: rgb``)."""
 
 #: ``PhoneBone`` regex, viur-core 3.9.
 PHONE_TEST_PATTERN = r"^\+?(\d{1,3})[-\s]?(\d{1,4})[-\s]?(\d{1,4})[-\s]?(\d{1,9})$"
@@ -188,7 +190,7 @@ register_bone_type(pydantic.EmailStr, BoneType(
     extras={"maxlength": 254, "minlength": None},
 ))
 register_bone_type(pydantic.AnyUrl, BoneType("uri", replace=True, extras=dict(_URI_EXTRAS)))
-register_bone_type(PydanticColor, BoneType("color", replace=True))
+register_bone_type(PydanticColor, BoneType("color", replace=True, extras=dict(_COLOR_EXTRAS)))
 
 try:
     from pydantic_extra_types.phone_numbers import PhoneNumber as PydanticPhoneNumber

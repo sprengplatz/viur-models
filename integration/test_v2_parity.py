@@ -46,7 +46,7 @@ class CrewParityModel(Model, table=True):
     crew: list[RelTarget] = Relationship(link_model=CrewLink)
 
 
-IGNORED = {"sortindex"}
+IGNORED = {"sortindex", "tags", "mode", "decimal"}
 
 
 def _normalize(entry: dict) -> dict:

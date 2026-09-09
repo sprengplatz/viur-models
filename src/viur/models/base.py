@@ -167,11 +167,11 @@ class Model(SQLModel):
 
     id: int | None = SQLModelField(default=None, primary_key=True)
     creationdate: datetime | None = Field(
-        default_factory=_utcnow, readonly=True, visible=False,
+        default_factory=_utcnow, readonly=True, visible=False, tags=("technical",),
         descr="created at", compute={"method": "Once"},
     )
     changedate: datetime | None = Field(
-        default_factory=_utcnow, readonly=True, visible=False,
+        default_factory=_utcnow, readonly=True, visible=False, tags=("technical",),
         descr="updated at", compute={"method": "OnWrite"},
     )
 

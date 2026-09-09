@@ -43,11 +43,7 @@ test = [
     "pytest~=8.0",
     "pytest-cov~=5.0",
     "coverage[toml]~=7.0",
-    # [overlay] pulls the real viur-core: the suite runs in the mock's overlay
-    # mode, where viur-core's own Module/decorators/Skeleton are used and only
-    # the datastore is kept in memory. Stand-in mode lacks Module and force_ssl,
-    # which viur.models.sqllist imports.
-    "spltz-viur-light-mock[overlay]>=0.3,<1.0",
+    "spltz-viur-light-mock>=0.3,<1.0",
     "alembic>=1.13",
 ]
 docs = [
@@ -88,6 +84,7 @@ addopts = [
 ]
 filterwarnings = [
     "error",
+    "ignore:'cgi' is deprecated and slated for removal in Python 3\\.13:DeprecationWarning",
 ]
 
 [tool.coverage.run]

@@ -35,6 +35,12 @@ def _viur_meta(field_info: t.Any) -> dict:
     return {}
 
 
+def _tags(meta: dict) -> list:
+    """``tags`` structure key (``BaseBone.tags``): a list, empty by default."""
+    tags = meta.get("tags")
+    return [tags] if isinstance(tags, str) else list(tags or ())
+
+
 def _unwrap_annotation(
     annotation: t.Any,
 ) -> tuple[t.Any, BoneType | None, LanguageWrapper | None, tuple]:
@@ -294,6 +300,7 @@ def _key_bone() -> dict:
     """System ``key`` bone (``KeyBone`` defaults)."""
     return {
         "descr": "Key",
+        "tags": ["technical"],
         "type": "key",
         "required": False,
         "params": {},
@@ -327,6 +334,7 @@ def _bone_structure(
         "unique": False,
         "languages": None,
         "indexed": getattr(field_info, "index", None) is not False,
+        "tags": _tags(meta),
         "clone_behavior": dict(CLONE_BEHAVIOR),
         "multiple": False,
     }
@@ -469,6 +477,7 @@ def _shortkey_bone() -> dict:
     """RefSkel ``shortkey`` bone — emitted in ``relskel``, not computed in dumps."""
     return {
         "descr": "Shortkey",
+        "tags": ["technical"],
         "type": "raw",
         "required": False,
         "params": {},
@@ -513,6 +522,7 @@ def _relational_structure(
     fk_title = fk_field_info.title if fk_field_info is not None else None
     bone = {
         "descr": meta.get("descr") or fk_title or rel_name.replace("_", " ").title(),
+        "tags": _tags(meta),
         "type": f"relational.{kind}",
         "required": bool(required) and not readonly,
         "params": meta.get("params") or {},
@@ -611,6 +621,7 @@ def structure_for_model(
                 )
             entry = {
                 "params": meta.get("params") or {},
+                "tags": _tags(meta),
                 "required": False,
                 "visible": bool(meta.get("visible", True)),
                 "readonly": bool(meta.get("readonly", False)),

@@ -8,9 +8,9 @@ directory, so this resolves under the default ``/skeletons/`` entry).
 ``test_structure_parity.py`` — same fields, defined once as bones and once
 as a Model. The parity test asserts both emit the same structure.
 """
+from viur.core import bones
 from viur.core.bones import (
     BooleanBone,
-    CodeBone,
     ColorBone,
     CredentialBone,
     DateBone,
@@ -50,7 +50,8 @@ class TypesRefSkel(Skeleton):
     kindName = "viur_models_test_types"
 
     raw = RawBone(descr="Raw")
-    code = CodeBone(descr="Code")
+    if hasattr(bones, "CodeBone"):
+        code = bones.CodeBone(descr="Code")
     color = ColorBone(descr="Color")
     phone = PhoneBone(descr="Phone")
     uri = UriBone(descr="Uri")

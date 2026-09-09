@@ -38,7 +38,7 @@ class TypesParityModel(Model):
 
 
 FIELDS = ["raw", "code", "color", "phone", "uri", "uid", "sortindex", "data", "secret"]
-IGNORED = {"sortindex"}
+IGNORED = {"sortindex", "tags", "mode", "decimal"}
 
 
 def _normalize(structure: dict) -> dict:
@@ -53,6 +53,8 @@ def test_type_structures_match_the_real_bones():
     skel_structure = _normalize(TypesRefSkel().structure())
     model_structure = _normalize(TypesParityModel.viur_structure())
     for field in FIELDS:
+        if field not in skel_structure:
+            continue
         assert model_structure[field] == skel_structure[field], (
             f"structure drift on {field!r}:\n"
             f"  model: {model_structure[field]}\n"

@@ -45,13 +45,13 @@ class BigQueryModel(Model):
     creationdate: datetime | None = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_type=sa.TIMESTAMP(timezone=True),
-        readonly=True, visible=False,
+        readonly=True, visible=False, tags=("technical",),
         descr="created at", compute={"method": "Once"},
     )
     changedate: datetime | None = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_type=sa.TIMESTAMP(timezone=True),
-        readonly=True, visible=False,
+        readonly=True, visible=False, tags=("technical",),
         descr="updated at", compute={"method": "OnWrite"},
     )
 

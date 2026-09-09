@@ -216,20 +216,18 @@ Der Pool-Default für URL-Verbindungen ist `NullPool`; das `memory`-Preset
 ## Entwicklungsumgebung
 
 Unit-Suite — **Overlay-Modus** von viur-light-mock (echter viur-core,
-In-Memory-Datastore), 100-%-Coverage-Gate. `[overlay]` pinnt die
-Core-Version; dem Stand-in-Modus fehlt `viur.core.Module`, das
-`viur.models.sqllist` importiert.
+In-Memory-Datastore), 100-%-Coverage-Gate.
 
 ```bash
 pip install --no-deps -e .
-pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock[overlay]>=0.3,<1.0' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
+pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock>=0.3,<1.0' 'viur-core>=3.8,<3.9' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
 pytest
 ```
 
 Integrations-Suite — echter Core ohne Mock (echte Skeleton-Registry):
 
 ```bash
-pip install "viur-core>=3.8,<4" rsa pytest 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
+pip install "viur-core>=3.8,<3.9" rsa pytest 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
 pip install --no-deps -e .
 python -m pytest -c integration/pytest.ini integration
 ```

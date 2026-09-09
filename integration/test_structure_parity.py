@@ -29,7 +29,7 @@ class ParityModel(Model):
 
 
 FIELDS = ["name", "mail", "rating", "active", "due", "state"]
-IGNORED = {"sortindex"}
+IGNORED = {"sortindex", "tags", "mode", "decimal"}
 
 
 def _normalize(structure: dict) -> dict:

@@ -25,11 +25,11 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install (overlay mode — real viur-core, in-memory datastore)
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps -e .
-          python -m pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock[overlay]>=0.3,<1.0' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
+          python -m pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock>=0.3,<1.0' 'viur-core>=3.8,<3.9' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
 
       - name: Run tests with 100% coverage gate
         run: pytest
@@ -71,16 +71,14 @@ jobs:
           fi
 
   integration:
-    # Runs the integration/ suite against a REAL viur-core (no viur-light-mock),
-    # so the package is validated against the actual framework. Bump the
-    # viur-core spec in the matrix to widen coverage across 3.8.x.
+    # integration/ against the real viur-core, no viur-light-mock.
     name: Integration (py ${{ matrix.python }}, viur-core ${{ matrix.viur-core }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13"]
-        viur-core: [">=3.8,<4"]
+        viur-core: [">=3.8,<3.9"]
 
     steps:
       - uses: actions/checkout@v4
@@ -90,11 +88,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Install real viur-core + viur-models (NOT viur-light-mock)
+      - name: Install viur-core + viur-models
         run: |
           python -m pip install --upgrade pip
-          # rsa is a transitive dep of the appengine testbed that viur-core
-          # imports at load time but does not pin.
           python -m pip install "viur-core${{ matrix.viur-core }}" rsa pytest 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
           python -m pip install --no-deps -e .
 
