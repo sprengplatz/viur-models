@@ -20,21 +20,21 @@ from viur.models import (
     SortIndex,
     Uid,
     Uri,
-    ViURField,
-    ViURModel,
+    Field,
+    Model,
 )
 
 
-class TypesParityModel(ViURModel):
-    raw: Raw | None = ViURField(default=None, descr="Raw")
-    code: Code | None = ViURField(default=None, descr="Code")
-    color: Color | None = ViURField(default=None, descr="Color")
-    phone: Phone | None = ViURField(default=None, descr="Phone", max_length=15)
-    uri: Uri | None = ViURField(default=None, descr="Uri")
-    uid: Uid | None = ViURField(default=None, descr="Uid")
-    sortindex: SortIndex | None = ViURField(default=None, descr="Sortindex")
-    data: Json | None = ViURField(default=None, descr="Data", sa_type=JSON)
-    secret: Credential | None = ViURField(default=None, descr="Secret")
+class TypesParityModel(Model):
+    raw: Raw | None = Field(default=None, descr="Raw")
+    code: Code | None = Field(default=None, descr="Code")
+    color: Color | None = Field(default=None, descr="Color")
+    phone: Phone | None = Field(default=None, descr="Phone", max_length=15)
+    uri: Uri | None = Field(default=None, descr="Uri")
+    uid: Uid | None = Field(default=None, descr="Uid")
+    sortindex: SortIndex | None = Field(default=None, descr="Sortindex")
+    data: Json | None = Field(default=None, descr="Data", sa_type=JSON)
+    secret: Credential | None = Field(default=None, descr="Secret")
 
 
 FIELDS = ["raw", "code", "color", "phone", "uri", "uid", "sortindex", "data", "secret"]

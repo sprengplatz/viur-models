@@ -1,35 +1,16 @@
-"""Cross-store relations — SQL models referencing **datastore skeletons**.
-
-``SkeletonRef(kind, …)`` builds a field type whose value is the ``dest``
-snapshot of a referenced skeleton entity (a plain JSON dict: the encoded
-datastore key + the ``ref_keys`` values), stored in a JSON column — the
-same denormalization the real ``RelationalBone`` writes into its entity::
-
-    author: UserRef() | None = ViURField(default=None, sa_type=JSON, descr="Autor")
-
-On client input (an opaque datastore key or a ``{"dest": {"key": …}}``
-shape) the target skeleton is read from the datastore and the snapshot is
-(re)built — actively setting an unknown key is rejected, while a
-roundtripped full snapshot whose target has vanished is kept (a deleted
-target must not block unrelated edits). Like viur-core between
-``updateRelations`` runs, snapshots can go stale when the target changes;
-:func:`refresh_crossstore` is the repair job — run it from a project cron
-or deferred task (``missing="keep"`` or ``"set_null"``).
-
-The core lookups (``RefSkel.fromSkel`` / ``skeletonByKind``) are imported
-lazily and isolated in :func:`resolve_relskel` / :func:`read_dest`, so
-unit tests can substitute them and plain model imports stay core-free.
-"""
+"""Cross-store references (SQL models → datastore skeletons): field types, ``SkeletonLink``,
+snapshot refresh."""
+import copy
 import dataclasses
 import typing as t
 
 from sqlalchemy import JSON
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field as SQLModelField, SQLModel
 
 
 @dataclasses.dataclass(frozen=True)
 class SkeletonRefMarker:
-    """Annotation marker produced by :func:`SkeletonRef`."""
+    """Marker produced by ``SkeletonRef``."""
 
     kind: str
     ref_keys: tuple[str, ...]
@@ -37,7 +18,7 @@ class SkeletonRefMarker:
     type_suffix: str | None
     multiple: bool
     format: str | None = None
-    extras: t.Any = None  # extra structure keys (e.g. FileBone's hints)
+    extras: t.Any = None  # extra structure keys
 
 
 def SkeletonRef(
@@ -50,19 +31,13 @@ def SkeletonRef(
     format: str | None = None,
     extras: dict | None = None,
 ) -> t.Any:
-    """Build a cross-store reference type for a datastore skeleton kind.
+    """Cross-store reference type for skeleton ``kind``.
 
-    :param kind: The target skeleton's ``kindName``.
-    :param ref_keys: Target bones carried in the ``dest`` snapshot /
-        ``relskel`` (``key`` and ``shortkey`` are always included, like
-        ``RelationalBone``).
-    :param module: The viur module serving the target (defaults to *kind*).
-    :param type_suffix: Inserted into the type string —
-        ``relational.<suffix>.<kind>`` (``FileBone`` style); plain
-        references emit ``relational.<kind>``.
-    :param multiple: List of references instead of a single one.
-    :param format: Display-format default (``ViURField(format=…)`` wins).
-    :param extras: Extra structure keys emitted verbatim.
+    :param ref_keys: Target bones in ``dest``/``relskel`` (``key``, ``shortkey`` always included).
+    :param module: Serving module (default: ``kind``).
+    :param type_suffix: ``relational.<suffix>.<kind>`` (``FileBone`` style).
+    :param format: Display format default; ``Field(format=…)`` wins.
+    :param extras: Extra structure keys, emitted verbatim.
     """
     marker = SkeletonRefMarker(
         kind=kind,
@@ -79,8 +54,7 @@ def SkeletonRef(
 
 
 def UserRef(ref_keys: t.Sequence[str] = ("name", "firstname", "lastname"), **kwargs: t.Any) -> t.Any:
-    """``UserBone`` analogue — a reference into the ``user`` module
-    (``relational.user``, with the bone's display format)."""
+    """``UserBone`` analogue (``relational.user``)."""
     kwargs.setdefault("format", "$(dest.lastname), $(dest.firstname) ($(dest.name))")
     return SkeletonRef("user", ref_keys, **kwargs)
 
@@ -92,22 +66,13 @@ def FileRef(
     ),
     **kwargs: t.Any,
 ) -> t.Any:
-    """``FileBone`` analogue — a reference into the file store
-    (``relational.tree.leaf.file.file``).
-
-    .. note::
-        ``FileBone``'s own structure hints (``valid_mime_types``,
-        ``public``) are not emitted by default — pass them via
-        ``extras=`` if your client needs them.
-    """
+    """``FileBone`` analogue (``relational.tree.leaf.file.file``); ``valid_mime_types``/``public`` via ``extras``."""
     kwargs.setdefault("type_suffix", "tree.leaf.file")
     return SkeletonRef("file", ref_keys, **kwargs)
 
 
 def resolve_relskel(marker: SkeletonRefMarker) -> dict:
-    """The ``relskel`` structure of the target — from the REAL skeleton
-    registry (``RefSkel.fromSkel``), exactly like ``RelationalBone``
-    (which always includes ``key`` and ``shortkey`` in its refKeys)."""
+    """Target ``relskel`` via ``RefSkel.fromSkel`` (``key``, ``shortkey`` + ``ref_keys``)."""
     from viur.core.skeleton import RefSkel
 
     ref_cls = RefSkel.fromSkel(marker.kind, "key", "shortkey", *marker.ref_keys)
@@ -115,9 +80,7 @@ def resolve_relskel(marker: SkeletonRefMarker) -> dict:
 
 
 def read_dest(marker: SkeletonRefMarker, key: str) -> dict | None:
-    """Read the referenced entity and build its ``dest`` snapshot.
-
-    Returns ``None`` for unknown keys (→ ``Invalid`` on the field)."""
+    """Read the target and build its ``dest`` snapshot; ``None`` for unknown keys."""
     from viur.core.skeleton import skeletonByKind
 
     skel = skeletonByKind(marker.kind)()
@@ -126,44 +89,38 @@ def read_dest(marker: SkeletonRefMarker, key: str) -> dict | None:
         return None
     return skel.dump(bones=("key", "shortkey", *marker.ref_keys))
 
+
+def _dest_reader() -> t.Callable[[SkeletonRefMarker, str], dict | None]:
+    """``read_dest`` cached per refresh run, keyed ``(kind, ref_keys, key)`` (the marker is
+    unhashable); returns deep copies."""
+    cache: dict[tuple, dict | None] = {}
+
+    def read(marker: SkeletonRefMarker, key: str) -> dict | None:
+        cache_key = (marker.kind, marker.ref_keys, key)
+        if cache_key not in cache:
+            # module global on purpose: tests patch read_dest
+            cache[cache_key] = read_dest(marker, key)
+        dest = cache[cache_key]
+        return copy.deepcopy(dest) if dest is not None else None
+
+    return read
+
+
 class SkeletonLink(SQLModel):
-    """Base for **link-table-backed** multiple cross-store references —
-    the ``link_model`` shape for datastore targets: one row per reference
-    (queryable/joinable), instead of a JSON array column::
+    """Base for link-table-backed multiple cross-store references (one row per target).
 
-        class EntryFeedbackLink(SkeletonLink, table=True):
-            __tablename__ = "example_entry_feedback"
-            viur_kind = "feedback"
-            viur_link_ref_keys = ("subject",)
-
-            entry_id: int | None = Field(
-                default=None, foreign_key="example_entry.id", primary_key=True,
-            )
-
-        class ExampleEntry(ViURModel, table=True):
-            feedback_history: list[EntryFeedbackLink] = Relationship(
-                sa_relationship_kwargs={"cascade": "all, delete-orphan"},
-            )
-
-    The base carries the datastore ``key`` (part of the primary key) and
-    the ``dest`` snapshot; subclasses add their parent FK and the marker
-    ClassVars (``viur_kind`` — required — plus optional
-    ``viur_link_ref_keys`` / ``viur_link_module`` / ``viur_link_type_suffix``
-    / ``viur_link_format`` / ``viur_link_extras``).
-
-    .. note::
-        The parent relationship needs ``cascade="all, delete-orphan"`` —
-        replacing the reference list must delete the detached rows (their
-        FK is part of the primary key).
+    Carries ``key`` (datastore key, part of the PK) and the ``dest`` snapshot; subclasses add
+    the parent FK and set ``viur_kind`` (required) plus the ``viur_link_*`` ClassVars. The
+    parent relationship needs ``cascade="all, delete-orphan"``.
     """
 
-    key: str = Field(primary_key=True)
-    dest: dict = Field(default_factory=dict, sa_type=JSON)
+    key: str = SQLModelField(primary_key=True)
+    dest: dict = SQLModelField(default_factory=dict, sa_type=JSON)
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: t.Any) -> None:
         super().__pydantic_init_subclass__(**kwargs)
-        _register_link(cls)  # for targeted refresh_for_target lookups
+        _register_link(cls)
 
     viur_kind: t.ClassVar[str | None] = None
     viur_link_ref_keys: t.ClassVar[tuple[str, ...]] = ("name",)
@@ -191,27 +148,9 @@ class SkeletonLink(SQLModel):
 
 
 def refresh_crossstore(*model_classes: type, missing: str = "keep") -> dict:
-    """Refresh the stored ``dest`` snapshots — the ``updateRelations``
-    analogue for cross-store references. Call it from a project cron or
-    deferred task::
-
-        from viur.models import refresh_crossstore
-        refresh_crossstore(ExampleEntry, missing="set_null")
-
-    Re-reads every referenced datastore target and rewrites stale
-    snapshots. Vanished targets follow *missing*:
-
-    - ``"keep"`` (default): the stale snapshot stays (core's
-      ``RelationalConsistency.Ignore``),
-    - ``"set_null"``: single references clear to ``None``, entries drop
-      out of JSON lists, ``SkeletonLink`` rows are deleted.
-
-    JSON-column references require a full table scan per model;
-    ``SkeletonLink`` tables refresh row-by-row over the indexed ``key``
-    column — prefer the link-table shape for large data sets.
-
-    :returns: ``{"checked": …, "refreshed": …, "cleared": …}``
-    """
+    """Re-read every referenced target and rewrite stale snapshots (full scan per model;
+    ``SkeletonLink`` tables via ``key``). ``missing="set_null"`` clears vanished targets.
+    Returns ``{"checked", "refreshed", "cleared"}``."""
     from sqlmodel import select
 
     from .db import get_session
@@ -221,10 +160,11 @@ def refresh_crossstore(*model_classes: type, missing: str = "keep") -> dict:
 
     stats = {"checked": 0, "refreshed": 0, "cleared": 0}
     seen_link_tables: set[type] = set()
+    read = _dest_reader()
 
     def _fresh(marker: SkeletonRefMarker, dest: dict) -> dict | None:
-        stats["checked"] += 1
-        return read_dest(marker, dest.get("key"))
+        stats["checked"] += 1  # rows, not reads
+        return read(marker, dest.get("key"))
 
     for model_cls in model_classes:
         json_fields = model_cls.viur_crossstore()
@@ -291,33 +231,25 @@ def refresh_crossstore(*model_classes: type, missing: str = "keep") -> dict:
     return stats
 
 
-# --------------------------------------------------------------------------- #
-# relations index — the viur-relations analogue                               #
-# --------------------------------------------------------------------------- #
+# --- relations index (viur-relations analogue) -----------------------------
 
 class CrossStoreIndex(SQLModel, table=True):
-    """Reverse index of cross-store references — the ``viur-relations``
-    analogue: one row per (datastore target key → referencing table/row/
-    field). Maintained by ``SQLList`` on every write, so
-    :func:`refresh_for_target` can update exactly the affected rows
-    instead of scanning tables. ``SkeletonLink`` tables are not indexed
-    here — their indexed ``key`` column IS the reverse index.
-    """
+    """Reverse index target key → (table, row, field) of JSON-column references; maintained by
+    ``SQLList`` on write. ``SkeletonLink`` tables index themselves via ``key``."""
 
     __tablename__ = "viur_models_relations"
 
-    id: int | None = Field(default=None, primary_key=True)
-    target_key: str = Field(index=True)
-    model_table: str = Field(index=True)
+    id: int | None = SQLModelField(default=None, primary_key=True)
+    target_key: str = SQLModelField(index=True)
+    model_table: str = SQLModelField(index=True)
     row_id: int
     field: str
 
 
-#: All table models with JSON-column cross-store fields (auto-registered
-#: at class definition) — the scan set for refresh_for_target.
+#: Table models with JSON-column cross-store fields (auto-registered).
 MODEL_REGISTRY: list[type] = []
 
-#: All SkeletonLink table classes (auto-registered at class definition).
+#: ``SkeletonLink`` classes (auto-registered).
 LINK_REGISTRY: list[type] = []
 
 
@@ -329,6 +261,26 @@ def _register_model(cls: type) -> None:
 def _register_link(cls: type) -> None:
     if cls not in LINK_REGISTRY:
         LINK_REGISTRY.append(cls)
+
+
+#: ``(registry sizes, kinds)`` cache of ``referenced_kinds``.
+_REFERENCED_KINDS: tuple[tuple[int, int], frozenset] | None = None
+
+
+def referenced_kinds() -> frozenset:
+    """Skeleton kinds referenced by any model or link table. Cached; rebuilt when the registries
+    grew (they only grow). Published as one immutable tuple — no lock, nothing restored."""
+    global _REFERENCED_KINDS
+    stamp = (len(MODEL_REGISTRY), len(LINK_REGISTRY))
+    cached = _REFERENCED_KINDS
+    if cached is None or cached[0] != stamp:
+        kinds = set()
+        for model_cls in MODEL_REGISTRY:
+            kinds.update(marker.kind for marker in model_cls.viur_crossstore().values())
+        kinds.update(link.viur_kind for link in LINK_REGISTRY if link.viur_kind)
+        cached = (stamp, frozenset(kinds))
+        _REFERENCED_KINDS = cached
+    return cached[1]
 
 
 def sync_index(instance: t.Any, session: t.Any) -> None:
@@ -367,29 +319,8 @@ def drop_index(instance: t.Any, session: t.Any) -> None:
 
 
 def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
-    """Targeted refresh: update every stored snapshot referencing ONE
-    datastore entity — the incremental ``updateRelations`` path.
-
-    Wire it into the target module's skeleton hooks (deferred, like core)::
-
-        from viur.core.tasks import CallDeferred
-        from viur.models import refresh_for_target
-
-        _refresh = CallDeferred(refresh_for_target)
-
-        class user(User):
-            def onEdited(self, skel):
-                super().onEdited(skel)
-                _refresh(str(skel["key"]))
-
-            def onDeleted(self, skel):
-                super().onDeleted(skel)
-                _refresh(str(skel["key"]), missing="set_null")
-
-    JSON-column references resolve over the ``viur_models_relations``
-    index; ``SkeletonLink`` tables are updated directly over their ``key``
-    column. Policies as in :func:`refresh_crossstore`.
-    """
+    """Update every snapshot referencing ``key``: JSON columns via the index, ``SkeletonLink`` rows
+    via ``key``. ``missing`` as in ``refresh_crossstore``. Called by the refresh hooks."""
     from sqlmodel import select
 
     from .db import get_session
@@ -398,6 +329,7 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
         raise ValueError('missing must be "keep" or "set_null"')
 
     stats = {"checked": 0, "refreshed": 0, "cleared": 0}
+    read = _dest_reader()
     models_by_table = {
         cls._viur_kind(): cls
         for cls in MODEL_REGISTRY
@@ -418,7 +350,7 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
                 session.delete(entry)  # referencing row/field is gone
                 continue
             stats["checked"] += 1
-            fresh = read_dest(marker, key)
+            fresh = read(marker, key)
             value = getattr(row, entry.field)
             if marker.multiple:
                 if fresh is None and missing == "keep":
@@ -452,7 +384,7 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
             marker = link_cls.viur_marker()
             for link in session.exec(select(link_cls).where(link_cls.key == key)).all():
                 stats["checked"] += 1
-                fresh = read_dest(marker, key)
+                fresh = read(marker, key)
                 if fresh is None:
                     if missing == "set_null":
                         session.delete(link)
@@ -466,27 +398,12 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
 
 
 def install_refresh_hooks(*, missing_on_delete: str = "set_null", countdown: int = 10) -> None:
-    """Automatic change propagation — call once at app boot (next to
-    ``viur.actions.install()``)::
+    """Wrap ``Skeleton.postSavedHandler``/``postDeletedHandler`` to defer ``refresh_for_target``
+    for referenced kinds. Once at boot; idempotent. Skeletons overriding the handlers without
+    ``super()`` must call it from their own ``onEdited``/``onDeleted``.
 
-        import viur.models
-        viur.models.install_refresh_hooks()
-
-    Wraps ``Skeleton.postSavedHandler`` / ``postDeletedHandler`` — the seam
-    every skeleton write/delete passes — so that changes to a **referenced**
-    kind defer :func:`refresh_for_target`, exactly like core defers its
-    ``update_relations`` task. Writes to unreferenced kinds cost one set
-    lookup and nothing else.
-
-    :param missing_on_delete: Policy when the referenced entity is deleted
-        (``"set_null"`` clears references, ``"keep"`` leaves snapshots).
-    :param countdown: Task delay in seconds (core uses 10 for
-        ``update_relations``).
-
-    .. note::
-        A skeleton class overriding ``postSavedHandler`` **without calling
-        super()** bypasses this — wire such modules manually via their
-        ``onEdited``/``onDeleted`` hooks (see :func:`refresh_for_target`).
+    :param missing_on_delete: ``"set_null"`` clears references on delete, ``"keep"`` leaves them.
+    :param countdown: Task delay in seconds.
     """
     from viur.core import tasks
     from viur.core.skeleton import Skeleton
@@ -504,20 +421,16 @@ def install_refresh_hooks(*, missing_on_delete: str = "set_null", countdown: int
         refresh_for_target(key, missing=missing)
 
     def _is_referenced(kind: t.Any) -> bool:
-        kinds = set()
-        for model_cls in MODEL_REGISTRY:
-            kinds.update(marker.kind for marker in model_cls.viur_crossstore().values())
-        kinds.update(link.viur_kind for link in LINK_REGISTRY if link.viur_kind)
-        return kind in kinds
+        return kind in referenced_kinds()
 
     @classmethod
-    def postSavedHandler(cls, skel, key, dbObj):  # noqa: ANN001 — core signature
+    def postSavedHandler(cls, skel, key, dbObj):  # noqa: ANN001
         original_saved(cls, skel, key, dbObj)
         if _is_referenced(getattr(skel, "kindName", None)):
             _deferred_refresh(str(key), missing="keep", _countdown=countdown)
 
     @classmethod
-    def postDeletedHandler(cls, skel, key):  # noqa: ANN001 — core signature
+    def postDeletedHandler(cls, skel, key):  # noqa: ANN001
         original_deleted(cls, skel, key)
         if _is_referenced(getattr(skel, "kindName", None)):
             _deferred_refresh(str(key), missing=missing_on_delete, _countdown=countdown)

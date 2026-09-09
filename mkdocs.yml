@@ -11,7 +11,8 @@ theme:
   logo: assets/logo.svg
   favicon: assets/favicon.svg
   features:
-    - navigation.instant
+    # navigation.instant is intentionally disabled: it is incompatible
+    # with the mkdocs-static-i18n language switcher contextual link.
     - navigation.tracking
     - navigation.sections
     - navigation.expand
@@ -38,10 +39,19 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Bone reference: bones.md
-  - Übersicht (Deutsch): bones-uebersicht.de.md
+  - Bone overview: bones-overview.md
+  - Migrations: migrations.md
+  - Migration matrix: migration-matrix.md
+  - BigQuery: bigquery.md
+  # API reference is generated from the (English) Python docstrings and
+  # exists only once. In the German build the de/api/* pages are tiny
+  # redirect stubs that bounce straight to the English page — so a German
+  # reader lands directly on the English API reference, and we avoid
+  # rendering mkdocstrings twice (which would create clashing anchors).
   - API reference:
       - Package: api/models.md
       - SQLList & session: api/sqllist.md
+      - Migrations: api/migrations.md
   - Changelog: changelog.md
 
 markdown_extensions:
@@ -69,6 +79,31 @@ hooks:
 
 plugins:
   - search
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: de
+          name: Deutsch
+          build: true
+          nav_translations:
+            Home: Start
+            Getting started: Erste Schritte
+            Bone reference: Bone-Referenz
+            Bone overview: Bone-Übersicht
+            Migrations: Migrationen
+            Migration matrix: Migrationsmatrix
+            BigQuery: BigQuery
+            API reference: API-Referenz
+            Package: Paket
+            SQLList & session: SQLList & Session
+            Changelog: Änderungshistorie
   - mkdocstrings:
       handlers:
         python:

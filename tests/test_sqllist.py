@@ -5,14 +5,18 @@ real SQLite in-memory database; the envelope render is replaced by a
 recording fake — the real envelope is exercised by the integration suite.
 """
 import json
+from types import SimpleNamespace
 
 import pytest
+from pydantic import computed_field
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import JSON
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, create_engine, select
 
 from viur.core import errors
 
-from viur.models import Password, ViURField, ViURModel, db
+from viur.models import Language, Password, Field, Model, db
 from viur.models.sqllist import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -23,16 +27,61 @@ from viur.models.sqllist import (
 )
 
 
-class Ticket(ViURModel, table=True):
+class Ticket(Model, table=True):
     __tablename__ = "viur_models_test_ticket"
-    name: str = ViURField(descr="Name", max_length=50)
-    rating: int | None = ViURField(default=None, ge=1, le=5)
-    due: __import__("datetime").datetime | None = ViURField(default=None, descr="Fällig")
-    secret: Password | None = ViURField(default=None, descr="Geheimnis")
+    name: str = Field(descr="Name", max_length=50)
+    rating: int | None = Field(default=None, ge=1, le=5)
+    due: __import__("datetime").datetime | None = Field(default=None, descr="Fällig")
+    secret: Password | None = Field(default=None, descr="Geheimnis")
+
+
+class Leaflet(Model, table=True):
+    """Multilingual model — the dotted-merge path of ``edit``."""
+
+    __tablename__ = "viur_models_test_leaflet"
+    title: Language[str] = Field(
+        default=None, languages=("de", "en"), sa_type=JSON, descr="Titel",
+    )
+
+
+class Quote(Model, table=True):
+    """Numeric fields in the three shapes the empty-value rule distinguishes."""
+
+    __tablename__ = "viur_models_test_quote"
+    rating: int | None = Field(default=None, ge=1, le=5)          # Optional → None
+    price: __import__("decimal").Decimal | None = Field(default=None, decimal_places=2)
+    factor: float = Field(default=1.0)                             # not Optional → default
+    amount: int = Field()                                          # required → error
+
+
+class QuoteModule(SQLList):
+    model = Quote
+
+    def __init__(self):
+        super().__init__("quotes", "/quotes")
+        self.render = RecordingRender()
+
+    def can(self, instance):
+        return True
+
+
+class Report(Model, table=True):
+    """Model with a computed bone — it reads columns a bonelist may not name."""
+
+    __tablename__ = "viur_models_test_report"
+    name: str = Field(default="", required=False)
+    score: int = Field(default=0)
+
+    @computed_field
+    @property
+    def label(self) -> str:
+        return f"{self.name}:{self.score}"
 
 
 class RecordingRender:
     """Captures render calls; returns (verb, skel) tuples for asserting."""
+
+    version = 2  # declares envelope-v2 compliance (see _require_v2_render)
 
     def __init__(self):
         self.calls = []
@@ -69,6 +118,42 @@ class TicketModule(SQLList):
         self.hook_log.append(("then", instance))
 
 
+class LeafletModule(SQLList):
+    model = Leaflet
+
+    def __init__(self):
+        super().__init__("leaflets", "/leaflets")
+        self.render = RecordingRender()
+
+    def can(self, instance):
+        return True
+
+
+class ReportModule(SQLList):
+    model = Report
+
+    def __init__(self):
+        super().__init__("reports", "/reports")
+        self.render = RecordingRender()
+
+    def can(self, instance):
+        return True
+
+
+def _bonelist(value, *, with_response=True):
+    """Request context carrying ``X-VIUR-BONELIST`` (and a response for ``Vary``)."""
+    from viur.core import current
+
+    context = SimpleNamespace(
+        skey_checked=True, isPostRequest=True,
+        request=SimpleNamespace(headers={"X-VIUR-BONELIST": value}),
+    )
+    if with_response:
+        context.response = SimpleNamespace(vary=None)
+    current.request.set(context)
+    return context
+
+
 @pytest.fixture()
 def module():
     engine = create_engine(
@@ -78,6 +163,18 @@ def module():
     db.configure(engine)
     yield TicketModule()
     db.reset()
+
+
+def _error_text(exc: BaseException) -> str:
+    """The human-readable message of a viur-core error, in either mock mode.
+
+    A real viur-core error is an ``HTTPException`` whose ``__init__`` calls
+    ``Exception.__init__()`` with NO arguments and keeps the text in
+    ``descr`` — so ``str(exc)`` is empty and ``pytest.raises(match=…)`` can
+    never match it. The stand-in errors are plain exceptions carrying the
+    text in ``args``. This reads whichever applies.
+    """
+    return getattr(exc, "descr", None) or str(exc)
 
 
 def _seed(*names_ratings):
@@ -103,6 +200,7 @@ def test_default_hooks_are_fail_closed(module):
         model = Ticket
 
     closed = Closed("closed", "/closed")
+    closed.render = RecordingRender()  # v2 guard passes; the hooks refuse
     with pytest.raises(errors.Forbidden):
         closed.list()
     # on/then defaults are no-ops
@@ -172,6 +270,20 @@ def test_list_ignores_unknown_and_readonly_parameters(module):
     _, result = module.list(orderby="creationdate", nonsense="x", creationdate="y")
     assert [t.name for t in result] == ["a"]
     assert result.get_orders() == []  # readonly orderby ignored
+
+
+def test_list_ignores_orderby_on_write_only_bones(module):
+    """A write-only bone must not be observable through ordering either —
+    the filters excluded it, ``orderby`` did not (regression)."""
+    _seed(("a", 1), ("b", 2))
+    with db.get_session() as session:
+        for ticket in session.exec(select(Ticket)).all():
+            ticket.secret = f"pw-{ticket.name}"
+            session.add(ticket)
+
+    _, result = module.list(orderby="secret", orderdir="desc")
+    assert result.get_orders() == []             # not orderable …
+    assert [t.name for t in result] == ["a", "b"]  # … falls back to id order
 
 
 def test_list_applies_sql_filter_hook(module):
@@ -267,7 +379,10 @@ def test_add_bounce_with_data_renders_validated_preview_without_saving(module):
 def test_add_get_request_never_writes(module):
     from viur.core import current
 
-    current.request.set(type("Req", (), {"isPostRequest": False})())
+    # skey_checked: the real @skey decorator (overlay mode) reads it; the
+    # point of this test is the GET, not the security key.
+    current.request.set(
+        type("Req", (), {"isPostRequest": False, "skey_checked": True})())
     try:
         verb, form = module.add(name="sneaky", skey="csrf")
     finally:
@@ -301,6 +416,22 @@ def test_edit_merges_and_keeps_unsubmitted_fields(module):
     with db.get_session() as session:
         stored = session.exec(select(Ticket)).one()
     assert (stored.name, stored.rating) == ("orig", 5)
+
+
+def test_edit_partial_dotted_language_keeps_the_other_languages(module):
+    # Regression: the merge seeds the stored dump, but a dotted sub-key used
+    # to REPLACE the whole language dict — an edit posting only ``title.de``
+    # wiped every other language of the row.
+    leaflets = LeafletModule()
+    leaflets.add(skey="csrf", **{"title.de": "Hallo", "title.en": "Hello"})
+    key = leaflets.render.calls[-1][1].viur_key
+
+    verb, instance = leaflets.edit(key, skey="csrf", **{"title.de": "Servus"})
+    assert verb == "editSuccess"
+    assert instance.title == {"de": "Servus", "en": "Hello"}
+    with db.get_session() as session:
+        stored = session.exec(select(Leaflet)).one()
+    assert stored.title == {"de": "Servus", "en": "Hello"}
 
 
 def test_edit_rejected_payload_keeps_stored_values(module):
@@ -369,7 +500,10 @@ def test_edit_get_request_never_writes(module):
     module.add(name="orig", rating="2", skey="csrf")
     key = module.render.calls[-1][1].viur_key
 
-    current.request.set(type("Req", (), {"isPostRequest": False})())
+    # skey_checked: the real @skey decorator (overlay mode) reads it; the
+    # point of this test is the GET, not the security key.
+    current.request.set(
+        type("Req", (), {"isPostRequest": False, "skey_checked": True})())
     try:
         verb, preview = module.edit(key, rating="4", skey="csrf")
     finally:
@@ -399,10 +533,153 @@ def test_delete_removes_row_and_renders_entity(module):
 # structure                                                                   #
 # --------------------------------------------------------------------------- #
 
+def test_view_checks_permission_while_the_instance_is_still_attached(module):
+    """``view`` used to close the session BEFORE calling the can-hook, so a
+    hook touching an attribute that was not eager-loaded raised on a detached
+    instance. ``edit``/``delete`` always checked inside the session; ``view``
+    now does too."""
+    from sqlalchemy import inspect as sa_inspect
+
+    class Attached(TicketModule):
+        seen = []
+
+        def can(self, instance):
+            if instance is not None:
+                self.seen.append(sa_inspect(instance).session is not None)
+            return True
+
+    attached = Attached()
+    attached.add(name="a", skey="csrf")
+    key = attached.render.calls[-1][1].viur_key
+    attached.seen.clear()
+
+    verb, _ = attached.view(key)
+    assert verb == "view"
+    assert attached.seen == [True]  # attached to a live session during can()
+
+
+# --------------------------------------------------------------------------- #
+# Empty numeric input — NumericBone.isEmpty parity                            #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("junk", ["", " ", "None", "null", "undefined"])
+def test_null_token_numeric_input_counts_as_empty(junk):
+    """vi-vue-utils posts ``"" + value`` — the string ``"null"``/``"undefined"`` for an
+    untouched field. Core's ``NumericBone.isEmpty`` treats that as empty; a Model must too."""
+    from viur.core.bones.base import ReadFromClientErrorSeverity
+
+    instance, errors = Quote.viur_from_client({"rating": junk, "price": junk, "factor": junk, "amount": "3"})
+    assert errors == []
+    assert (instance.rating, instance.price) == (None, None)  # Optional → None
+    assert instance.factor == 1.0                              # not Optional → its default
+
+    _, errors = Quote.viur_from_client({"amount": junk})       # required → NotSet, like core
+    assert [(tuple(e.fieldPath), e.severity) for e in errors] == [
+        (("amount",), ReadFromClientErrorSeverity.NotSet),
+    ]
+
+
+def test_numeric_input_accepts_comma_and_whitespace():
+    instance, errors = Quote.viur_from_client({"rating": " 4 ", "price": "1,50", "amount": "2"})
+    assert errors == []
+    assert (instance.rating, str(instance.price)) == (4, "1.50")
+
+
+def test_real_garbage_numeric_input_is_still_an_error():
+    """Deliberate deviation from core, where isEmpty swallows anything unparseable:
+    a typo must surface, not silently become the empty value."""
+    _, errors = Quote.viur_from_client({"rating": "3x", "amount": "2"})
+    assert [tuple(e.fieldPath) for e in errors] == [("rating",)]
+
+
+def test_edit_with_junk_numeric_input_clears_the_field(module):
+    quotes = QuoteModule()
+    quotes.add(rating="3", amount="1", skey="csrf")
+    key = quotes.render.calls[-1][1].viur_key
+
+    verb, instance = quotes.edit(key, rating="undefined", skey="csrf")
+    assert verb == "editSuccess"
+    assert instance.rating is None and instance.amount == 1
+
+
+# --------------------------------------------------------------------------- #
+# X-VIUR-BONELIST — load and dump only what the client asked for              #
+# --------------------------------------------------------------------------- #
+
+def test_list_loads_and_dumps_only_the_client_bonelist(module):
+    """Core unserializes a bone on access; here an unrequested column is not
+    even fetched (deferred), and dump/structure are subskel-shaped."""
+    module.add(name="a", rating="1", skey="csrf")
+    module.add(name="b", rating="2", skey="csrf")
+    context = _bonelist("name, nope")  # unknown names are ignored
+
+    verb, rows = module.list()
+    assert verb == "list" and len(rows) == 2
+    for row in rows:
+        assert set(row.dump()) == {"key", "name"}
+        assert set(row.structure()) == {"key", "name"}
+        assert {"rating", "due", "secret", "creationdate", "changedate"} <= sa_inspect(row).unloaded
+    assert context.response.vary[0] == "X-VIUR-BONELIST"
+
+
+def test_view_honours_the_bonelist_and_the_always_bones(module, monkeypatch):
+    monkeypatch.setattr(Ticket, "viur_bones_always", ("rating",))  # the "*"-subskel analogue
+    module.add(name="a", rating="3", skey="csrf")
+    key = module.render.calls[-1][1].viur_key
+    _bonelist("name", with_response=False)  # no response object → nothing to Vary
+
+    verb, instance = module.view(key)
+    assert verb == "view"
+    assert set(instance.dump()) == {"key", "name", "rating"}
+    assert instance.dump()["rating"] == 3
+    assert "due" in sa_inspect(instance).unloaded
+
+
+def test_bonelist_still_loads_the_sort_column_for_the_cursor(module):
+    for index in range(3):
+        module.add(name=f"t{index}", rating=str(index + 1), skey="csrf")
+    _bonelist("name")
+
+    verb, rows = module.list(orderby="rating", limit=2)  # rating: sorted by, not dumped
+    assert rows.getCursor()                              # the cursor encodes the sort value
+    assert [row.name for row in rows] == ["t0", "t1"]
+    assert "rating" not in rows[0].dump()
+
+
+def test_bonelist_with_a_computed_bone_loads_the_full_row(module):
+    """A computed bone reads whatever columns it likes — no load_only then."""
+    reports = ReportModule()
+    reports.add(name="x", score="7", skey="csrf")
+    _bonelist("label")
+
+    verb, rows = reports.list()
+    assert rows[0].dump() == {"key": rows[0].viur_key, "label": "x:7"}
+    assert "score" not in sa_inspect(rows[0]).unloaded
+
+
+def test_empty_bonelist_header_means_no_restriction(module):
+    module.add(name="a", rating="2", skey="csrf")
+    _bonelist("")
+    verb, rows = module.list()
+    assert "rating" in rows[0].dump()
+
+
+def test_edit_ignores_the_bonelist(module):
+    """edit merges the stored dump — it must never see a restricted one."""
+    module.add(name="orig", rating="2", skey="csrf")
+    key = module.render.calls[-1][1].viur_key
+    _bonelist("name")
+
+    verb, instance = module.edit(key, rating="5", skey="csrf")
+    assert verb == "editSuccess"
+    assert (instance.name, instance.rating) == ("orig", 5)
+    assert "rating" in instance.dump()
+
+
 def test_structure_renders_per_action(module):
     verb, form = module.structure(action="view")
     assert verb == "structure.view"
-    assert form.structure() is Ticket.viur_structure()
+    assert form.structure() == Ticket.viur_structure()
 
 
 def test_structure_unknown_action_is_not_implemented(module):
@@ -432,9 +709,9 @@ def test_search_matches_string_fields_case_insensitively(module):
     assert len(result) == 3  # empty term: no restriction
 
 
-class NumbersOnly(ViURModel, table=True):
+class NumbersOnly(Model, table=True):
     __tablename__ = "viur_models_test_numbersonly"
-    value: int | None = ViURField(default=None)
+    value: int | None = Field(default=None)
 
 
 class NumbersModule(SQLList):
@@ -575,3 +852,51 @@ def test_cursor_value_coercion_branches():
     assert _coerce_cursor_value(col(decimal.Decimal), 9.5) == decimal.Decimal("9.5")
     assert _coerce_cursor_value(col(int), 7) == 7
     assert _coerce_cursor_value(col(int), None) is None
+
+
+# --------------------------------------------------------------------------- #
+# envelope-v2 enforcement                                                     #
+# --------------------------------------------------------------------------- #
+
+class _V1Render:
+    """A render WITHOUT the v2 marker — viur-core's DefaultRender shape."""
+
+    def view(self, skel, **kwargs): return ("view", skel)
+    def list(self, skellist, **kwargs): return ("list", skellist)
+
+
+def test_every_action_refuses_a_non_v2_render(module):
+    """SQLList has no v1 wire shape: core's v1 renderEntry is isinstance-
+    gated on SkeletonInstance and would serialize a Model through a
+    deprecation fallback — silently wrong responses. A non-upgraded mount
+    must therefore answer 406, not degrade."""
+    _seed(("a", 1),)
+    with db.get_session() as session:
+        key = session.exec(select(Ticket)).one().viur_key
+    module.render = _V1Render()
+
+    for call in (
+        lambda: module.list(),
+        lambda: module.view(key),
+        lambda: module.add(name="x", skey="s"),
+        lambda: module.edit(key, name="y", skey="s"),
+        lambda: module.delete(key, skey="s"),
+        lambda: module.structure("view"),
+    ):
+        with pytest.raises(errors.NotAcceptable) as raised:
+            call()
+        assert "envelope v2" in _error_text(raised.value)
+
+
+def test_missing_render_is_also_refused(module):
+    del module.render
+    with pytest.raises(errors.NotAcceptable) as raised:
+        module.list()
+    assert "viur.actions.install" in _error_text(raised.value)
+
+
+def test_the_v2_pin_is_built_in():
+    """``viur.actions.install()`` upgrades every mount of a class carrying
+    ``json_version = 2`` — subclasses must not need to repeat it."""
+    assert SQLList.json_version == 2
+    assert TicketModule.json_version == 2  # inherited

@@ -13,22 +13,22 @@ from viur.models import (
     SortIndex,
     Uid,
     Uri,
-    ViURField,
-    ViURModel,
+    Field,
+    Model,
 )
 from viur.models.types import PHONE_TEST_PATTERN
 
 
-class TypesModel(ViURModel):
-    raw: Raw = ViURField(default="", required=False)
-    code: Code = ViURField(default="", required=False)
-    color: Color = ViURField(default="", required=False)
-    phone: Phone = ViURField(default="", required=False, max_length=15)
-    uri: Uri = ViURField(default="", required=False)
-    uid: Uid = ViURField(default="", required=False, readonly=True)
-    sortindex: SortIndex = ViURField(default=0.0, required=False)
-    data: Json = ViURField(default_factory=dict, required=False)
-    secret: Credential = ViURField(default="", required=False, visible=False)
+class TypesModel(Model):
+    raw: Raw = Field(default="", required=False)
+    code: Code = Field(default="", required=False)
+    color: Color = Field(default="", required=False)
+    phone: Phone = Field(default="", required=False, max_length=15)
+    uri: Uri = Field(default="", required=False)
+    uid: Uid = Field(default="", required=False, readonly=True)
+    sortindex: SortIndex = Field(default=0.0, required=False)
+    data: Json = Field(default_factory=dict, required=False)
+    secret: Credential = Field(default="", required=False, visible=False)
 
 
 STRUCTURE = TypesModel.viur_structure()

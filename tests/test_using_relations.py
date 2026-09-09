@@ -7,16 +7,16 @@ from sqlalchemy import JSON
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Field, Relationship, SQLModel, create_engine, select
 
-from viur.models import RelationLink, SkeletonLink, ViURField, ViURModel, db
+from viur.models import RelationLink, SkeletonLink, Field, Model, db
 from viur.models import crossstore
 from viur.models.sqllist import SQLList
 
 from tests.test_sqllist import RecordingRender
 
 
-class UTag(ViURModel, table=True):
+class UTag(Model, table=True):
     __tablename__ = "viur_models_test_utag"
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
 
 
 class UEntryTagLink(RelationLink, table=True):
@@ -28,17 +28,17 @@ class UEntryTagLink(RelationLink, table=True):
         default=None, foreign_key="viur_models_test_utag.id", primary_key=True,
     )
     tag: UTag = Relationship()
-    weight: int = ViURField(default=0, ge=0, le=10, descr="Gewichtung")
+    weight: int = Field(default=0, ge=0, le=10, descr="Gewichtung")
 
 
-class UEntry(ViURModel, table=True):
+class UEntry(Model, table=True):
     __tablename__ = "viur_models_test_uentry"
 
     viur_relation_meta = {
         "tags": {"descr": "Schlagworte", "multiple": {"duplicates": False}},
     }
 
-    title: str = ViURField(default="", required=False)
+    title: str = Field(default="", required=False)
     tags: list[UEntryTagLink] = Relationship(
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -97,9 +97,9 @@ def test_misconfigured_link_fails_fast():
         parent_id: int | None = Field(
             default=None, foreign_key="viur_models_test_brokenusing.id", primary_key=True,
         )
-        note: str = ViURField(default="", required=False, primary_key=True)
+        note: str = Field(default="", required=False, primary_key=True)
 
-    class Broken(ViURModel, table=True):
+    class Broken(Model, table=True):
         __tablename__ = "viur_models_test_brokenusing"
         links: list[LonelyLink] = Relationship()
 
@@ -230,13 +230,13 @@ class RatedFeedbackLink(SkeletonLink, table=True):
     entry_id: int | None = Field(
         default=None, foreign_key="viur_models_test_uentry2.id", primary_key=True,
     )
-    note: str = ViURField(default="", required=False, descr="Notiz")
-    priority: int = ViURField(default=0, ge=0, le=5, descr="Priorität")
+    note: str = Field(default="", required=False, descr="Notiz")
+    priority: int = Field(default=0, ge=0, le=5, descr="Priorität")
 
 
-class UEntry2(ViURModel, table=True):
+class UEntry2(Model, table=True):
     __tablename__ = "viur_models_test_uentry2"
-    title: str = ViURField(default="", required=False)
+    title: str = Field(default="", required=False)
     feedback: list[RatedFeedbackLink] = Relationship(
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )

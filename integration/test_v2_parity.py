@@ -11,19 +11,19 @@ from skeletons import RelRefSkel, V2RefSkel
 from sqlalchemy import JSON
 from sqlmodel import Field, Relationship, SQLModel
 
-from viur.models import Language, Password, Spatial, ViURField, ViURModel
+from viur.models import Language, Password, Spatial, Field, Model
 
 from test_relation_parity import RelTarget
 
 Position = Spatial(bounds_lat=(46.0, 56.0), bounds_lng=(4.0, 17.0))
 
 
-class V2ParityModel(ViURModel):
-    title: Language[str] | None = ViURField(
+class V2ParityModel(Model):
+    title: Language[str] | None = Field(
         default=None, languages=("de", "en"), sa_type=JSON, descr="Titel",
     )
-    pos: Position | None = ViURField(default=None, sa_type=JSON, descr="Position")
-    pwd: Password | None = ViURField(default=None, descr="Passwort")
+    pos: Position | None = Field(default=None, sa_type=JSON, descr="Position")
+    pwd: Password | None = Field(default=None, descr="Passwort")
 
 
 class CrewLink(SQLModel, table=True):
@@ -36,7 +36,7 @@ class CrewLink(SQLModel, table=True):
     )
 
 
-class CrewParityModel(ViURModel, table=True):
+class CrewParityModel(Model, table=True):
     __tablename__ = "viur_models_test_crewparity"
 
     viur_relation_meta = {

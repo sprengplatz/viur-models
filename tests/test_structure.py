@@ -7,7 +7,7 @@ import typing as t
 import pytest
 from sqlmodel import Field, Relationship
 
-from viur.models import BoneType, Email, Text, ViURField, ViURModel
+from viur.models import BoneType, Email, Text, Field, Model
 
 Slug = t.Annotated[str, BoneType("str.slug", extras={"pattern": "^[a-z-]+$"})]
 
@@ -17,27 +17,27 @@ class Kind(enum.Enum):
     HARSH_WORDS = "harsh_words"
 
 
-class Sample(ViURModel):
-    name: str = ViURField(descr="Name", max_length=100, min_length=2)
-    message: Text = ViURField(default="", required=False, descr="Message")
-    rating: int = ViURField(ge=1, le=5, descr="Rating")
-    price: decimal.Decimal | None = ViURField(default=None, decimal_places=2, descr="Price")
-    factor: float = ViURField(default=1.5, descr="Factor")
-    active: bool = ViURField(default=True, descr="Active")
-    kind: Kind = ViURField(descr="Kind")
-    mood: Kind = ViURField(default=Kind.PRAISE, descr="Mood")
-    status: t.Literal["new", "done"] | None = ViURField(
+class Sample(Model):
+    name: str = Field(descr="Name", max_length=100, min_length=2)
+    message: Text = Field(default="", required=False, descr="Message")
+    rating: int = Field(ge=1, le=5, descr="Rating")
+    price: decimal.Decimal | None = Field(default=None, decimal_places=2, descr="Price")
+    factor: float = Field(default=1.5, descr="Factor")
+    active: bool = Field(default=True, descr="Active")
+    kind: Kind = Field(descr="Kind")
+    mood: Kind = Field(default=Kind.PRAISE, descr="Mood")
+    status: t.Literal["new", "done"] | None = Field(
         default=None, values={"new": "Neu", "done": "Fertig"},
     )
-    due: datetime.date | None = ViURField(default=None, descr="Due")
-    slot: datetime.time | None = ViURField(default=None, descr="Slot")
-    secret: str = ViURField(default="", visible=False, readonly=True, required=True)
-    unindexed: str = ViURField(default="", index=False, required=False)
-    titled: str = ViURField(default="", title="Custom Title", required=False)
-    email: Email = ViURField(default="", required=False)
-    optional_mail: Email | None = ViURField(default=None)  # marker inside a union arm
-    slug: Slug = ViURField(default="", required=False)
-    note: t.Optional[str] = None  # plain pydantic field, no ViURField
+    due: datetime.date | None = Field(default=None, descr="Due")
+    slot: datetime.time | None = Field(default=None, descr="Slot")
+    secret: str = Field(default="", visible=False, readonly=True, required=True)
+    unindexed: str = Field(default="", index=False, required=False)
+    titled: str = Field(default="", title="Custom Title", required=False)
+    email: Email = Field(default="", required=False)
+    optional_mail: Email | None = Field(default=None)  # marker inside a union arm
+    slug: Slug = Field(default="", required=False)
+    note: t.Optional[str] = None  # plain pydantic field, no Field
     tagged: str = Field(default="", schema_extra={"json_schema_extra": {"foo": 1}})
 
 
@@ -96,8 +96,8 @@ def test_refining_types_keep_their_base_extras():
 def test_registry_maps_ecosystem_types():
     from viur.models import Country
 
-    class Address(ViURModel):
-        country: Country | None = ViURField(default=None, descr="Country")
+    class Address(Model):
+        country: Country | None = Field(default=None, descr="Country")
 
     bone = Address.viur_structure()["country"]
     assert (bone["type"], bone["emptyvalue"]) == ("select.country", None)
@@ -151,11 +151,16 @@ def test_flag_derivations():
 def test_structure_is_cached_per_class():
     # identity across calls — NOT against an import-time snapshot: SQLList
     # registration (other test files) legitimately drops structure caches
-    first = Sample.viur_structure()
-    assert Sample.viur_structure() is first
+    first = Sample._viur_structure_shared()
+    assert Sample._viur_structure_shared() is first
+    # the PUBLIC accessor hands out a copy: equal, never the cache itself
+    public = Sample.viur_structure()
+    assert public == first and public is not first
+    public["name"]["descr"] = "mutated by a caller"
+    assert Sample._viur_structure_shared()["name"]["descr"] != "mutated by a caller"
 
     class SampleChild(Sample):
-        extra: str = ViURField(default="", required=False)
+        extra: str = Field(default="", required=False)
 
     child = SampleChild.viur_structure()
     assert child is not first and "extra" in child and "extra" not in first
@@ -163,20 +168,20 @@ def test_structure_is_cached_per_class():
 
 def test_unmappable_type_fails_at_class_definition():
     with pytest.raises(TypeError, match="no bone mapping"):
-        class Broken(ViURModel):
-            blob: dict = ViURField(default=None)
+        class Broken(Model):
+            blob: dict = Field(default=None)
 
     with pytest.raises(TypeError, match="no bone mapping"):
-        class BrokenGeneric(ViURModel):  # generic alias, not a plain type
-            items: list[int] = ViURField(default=None)
+        class BrokenGeneric(Model):  # generic alias, not a plain type
+            items: list[int] = Field(default=None)
 
     with pytest.raises(TypeError, match="Union type"):
-        class BrokenUnion(ViURModel):
-            either: int | str = ViURField(default=0)
+        class BrokenUnion(Model):
+            either: int | str = Field(default=0)
 
 
 def test_relationships_require_table_models():
-    class WithRelation(ViURModel):  # no table=True — no mapper, no FK columns
+    class WithRelation(Model):  # no table=True — no mapper, no FK columns
         author: t.Optional["Sample"] = Relationship()
 
     with pytest.raises(NotImplementedError, match="table=True"):

@@ -9,7 +9,7 @@ import enum
 
 from viur.core.bones.base import ReadFromClientErrorSeverity
 
-from viur.models import ViURField, ViURModel
+from viur.models import Field, Model
 
 
 class Mood(enum.Enum):
@@ -17,13 +17,13 @@ class Mood(enum.Enum):
     BAD = "bad"
 
 
-class Entry(ViURModel):
-    name: str = ViURField(descr="Name", max_length=20)
-    rating: int | None = ViURField(default=None, ge=1, le=5)
-    price: decimal.Decimal | None = ViURField(default=None)
-    mood: Mood | None = ViURField(default=None)
-    due: datetime.datetime | None = ViURField(default=None)
-    day: datetime.date | None = ViURField(default=None)
+class Entry(Model):
+    name: str = Field(descr="Name", max_length=20)
+    rating: int | None = Field(default=None, ge=1, le=5)
+    price: decimal.Decimal | None = Field(default=None)
+    mood: Mood | None = Field(default=None)
+    due: datetime.datetime | None = Field(default=None)
+    day: datetime.date | None = Field(default=None)
 
 
 def test_dump_shapes():
@@ -55,7 +55,8 @@ def test_dump_bones_filter():
 def test_renderable_protocol_aliases():
     entry = Entry(name="x")
     assert entry.dump(bones=("name",)) == {"name": "x"}
-    assert entry.structure() is Entry.viur_structure()
+    assert entry.structure() == Entry.viur_structure()
+    assert entry.structure() is not Entry._viur_structure_shared()  # caller owns it
 
 
 def test_from_client_accepts_and_filters():

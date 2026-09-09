@@ -25,11 +25,11 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install (skip viur-core runtime dep — mocked by viur-light-mock)
+      - name: Install (overlay mode — real viur-core, in-memory datastore)
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps -e .
-          python -m pip install pytest pytest-cov 'coverage[toml]' viur-light-mock viur-actions sqlmodel pydantic-extra-types pycountry email-validator
+          python -m pip install pytest pytest-cov 'coverage[toml]' 'spltz-viur-light-mock[overlay]>=0.3,<1.0' 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
 
       - name: Run tests with 100% coverage gate
         run: pytest
@@ -94,7 +94,7 @@ jobs:
           python -m pip install --upgrade pip
           # rsa is a transitive dep of the appengine testbed that viur-core
           # imports at load time but does not pin.
-          python -m pip install "viur-core${{ matrix.viur-core }}" rsa pytest viur-actions sqlmodel pydantic-extra-types pycountry email-validator
+          python -m pip install "viur-core${{ matrix.viur-core }}" rsa pytest 'spltz-viur-actions>=0.4,<1.0' sqlmodel pydantic-extra-types pycountry email-validator 'alembic>=1.13'
           python -m pip install --no-deps -e .
 
       - name: Run integration suite (real core, isolated config)

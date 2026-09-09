@@ -1,21 +1,4 @@
-"""Structure mapping — SQLModel/pydantic field definitions → ViUR bone structure.
-
-Emits, per field, the same JSON-serializable dict that
-``viur.core.bones.BaseBone.structure()`` (and its specializations) would
-produce, so clients cannot tell a SQL-backed module from a skeleton-backed
-one. The emitted key set and defaults are pinned against viur-core 3.9:
-
-- base keys: ``descr, type, required, params, visible, readonly, unique,
-  languages, emptyvalue, indexed, clone_behavior, multiple`` (+ optional
-  ``defaultvalue``) — plus ``sortindex`` per ``SkeletonInstance.structure()``
-- ``str`` → ``maxlength`` (default 254), ``minlength``
-- ``numeric`` → ``min``/``max`` (int64 bounds), ``precision``, ``decimal``
-- ``date`` → ``date``, ``time``, ``naive``
-- ``select`` → ``values`` (new-style ``{value: label}`` dict)
-
-The integration suite compares this against the real bones; the unit suite
-pins it with a golden file.
-"""
+"""Field definitions → bone structure dicts (``BaseBone.structure()`` parity, viur-core 3.9)."""
 import datetime
 import decimal
 import enum
@@ -33,10 +16,7 @@ from .types import BONE_TYPE_REGISTRY, BoneType, LanguageWrapper
 from . import crossstore as _crossstore
 from . import types as _types
 
-#: Model class → name of the module serving it (filled by ``SQLList`` at
-#: construction). Relational bones emit it as their ``module`` so admin
-#: clients query the RIGHT module for selections — the kind/table name is
-#: only the fallback for unserved targets.
+#: Model class → serving module name (filled by ``SQLList``); relational bones emit it as ``module``.
 MODULE_BY_MODEL: dict[type, str] = {}
 
 # Defaults pinned against viur-core 3.9 bone implementations.
@@ -48,7 +28,7 @@ CLONE_BEHAVIOR = {"strategy": "copy_value"}
 
 
 def _viur_meta(field_info: t.Any) -> dict:
-    """Bone metadata a ViURField left in ``json_schema_extra["viur"]``."""
+    """Bone metadata a Field left in ``json_schema_extra["viur"]``."""
     extra = field_info.json_schema_extra
     if isinstance(extra, dict):
         return dict(extra.get(VIUR_META_KEY) or {})
@@ -58,13 +38,8 @@ def _viur_meta(field_info: t.Any) -> dict:
 def _unwrap_annotation(
     annotation: t.Any,
 ) -> tuple[t.Any, BoneType | None, LanguageWrapper | None, tuple]:
-    """Core type of ``T | None`` / ``Optional[T]`` / ``Annotated[T, …]``.
-
-    pydantic moves top-level ``Annotated`` metadata into
-    ``FieldInfo.metadata``, but leaves it in place inside a union arm
-    (``Email | None``) — so :class:`BoneType` and :class:`LanguageWrapper`
-    markers are extracted here as well and returned alongside the core type.
-    """
+    """Core type of ``T | None`` / ``Annotated[T, …]`` plus its ``BoneType``/``LanguageWrapper``
+    markers (pydantic leaves ``Annotated`` metadata in place inside a union arm)."""
     if t.get_origin(annotation) in (t.Union, types.UnionType):
         args = [arg for arg in t.get_args(annotation) if arg is not type(None)]
         if len(args) != 1:
@@ -83,9 +58,7 @@ def _unwrap_annotation(
 
 
 def _constraints(field_info: t.Any, annotated_metadata: tuple = ()) -> dict:
-    """Collect relevant validation constraints from ``FieldInfo.metadata``
-    plus metadata still sitting inside a union-arm ``Annotated`` (e.g.
-    ``constr(max_length=…) | None`` — pydantic leaves those in place)."""
+    """Validation constraints from ``FieldInfo.metadata`` and union-arm ``Annotated`` metadata."""
     out = {}
     for item in (*field_info.metadata, *annotated_metadata):
         for attr in ("max_length", "min_length", "ge", "le", "gt", "lt", "decimal_places"):
@@ -95,14 +68,10 @@ def _constraints(field_info: t.Any, annotated_metadata: tuple = ()) -> dict:
 
 
 def _numeric(cons: dict, precision: int, decimal_mode: bool) -> dict:
-    # NOTE: ``decimal`` is NOT ``precision > 0`` — the real NumericBone
-    # keeps ``decimal: false`` for floats (e.g. SortIndexBone: precision 8,
-    # decimal false); it only flips for exact-decimal mode.
+    # decimal is not precision > 0: NumericBone keeps decimal=False for floats
     minimum, maximum = cons.get("ge"), cons.get("le")
     if precision == 0:
-        # exclusive Gt/Lt (PositiveInt, conint(gt=…)) convert exactly for
-        # integers; for floats there is no exact inclusive bound, so only
-        # ge/le feed the structure hint there (validation still applies).
+        # exclusive bounds convert exactly for integers only
         if minimum is None and (exclusive := cons.get("gt")) is not None:
             minimum = int(exclusive) + 1
         if maximum is None and (exclusive := cons.get("lt")) is not None:
@@ -127,8 +96,7 @@ def _select(core_values: dict, meta: dict) -> dict:
 
 
 def crossstore_fields(cls: type) -> dict:
-    """Field names carrying a :class:`SkeletonRefMarker` (cross-store
-    references into the datastore world) → their marker."""
+    """``name → SkeletonRefMarker`` of the cross-store fields."""
     out = {}
     for name, field_info in cls.model_fields.items():
         _, _, _, annotated_metadata = _unwrap_annotation(field_info.annotation)
@@ -143,12 +111,7 @@ def crossstore_fields(cls: type) -> dict:
 
 
 def _analyze_relation_link(parent_table: t.Any, link_cls: type) -> dict:
-    """Derive dest side and using fields from an association-object link.
-
-    The link's FK pointing at the parent table is the parent side; its
-    single to-one relationship is the ``dest`` side; every scalar field
-    that is not one of the two FK columns is edge payload (the using-skel).
-    """
+    """Association link: parent FK, the single to-one ``dest`` relationship, remaining scalars = using fields."""
     link_mapper = link_cls.__mapper__
     parent_fk = next(
         (column.key for column in link_mapper.local_table.columns
@@ -186,18 +149,23 @@ def _analyze_relation_link(parent_table: t.Any, link_cls: type) -> dict:
     }
 
 
-def _using_structure(link_cls: type, using_fields: list) -> dict:
-    """The ``using`` structure — the link model's payload fields, mapped
-    like any other fields (they ARE the using-skel)."""
+def _using_structure(
+    link_cls: type, using_fields: list, *, resolve_refs: bool = True,
+) -> dict:
+    """``using`` structure of a link model's payload fields."""
     return {
-        name: _bone_structure(name, link_cls.model_fields[name]) | {"sortindex": index}
+        name: _bone_structure(
+            name, link_cls.model_fields[name], resolve_refs=resolve_refs,
+        ) | {"sortindex": index}
         for index, name in enumerate(using_fields)
     }
 
 
-def _crossstore_structure(marker: SkeletonRefMarker, meta: dict) -> dict:
-    """A ``relational.<kind>`` bone entry for a datastore reference —
-    ``relskel`` comes from the REAL skeleton registry (lazy)."""
+def _crossstore_structure(
+    marker: SkeletonRefMarker, meta: dict, *, resolve_refs: bool = True,
+) -> dict:
+    """``relational.<kind>`` entry for a datastore reference; ``resolve_refs=False`` leaves
+    ``relskel`` empty (no skeleton registry outside a booted app)."""
     suffix = f"{marker.type_suffix}." if marker.type_suffix else ""
     entry = {
         "type": f"relational.{suffix}{marker.kind}",
@@ -206,7 +174,7 @@ def _crossstore_structure(marker: SkeletonRefMarker, meta: dict) -> dict:
         "module": marker.module,
         "format": meta.get("format") or marker.format or "$(dest.name)",
         "using": None,
-        "relskel": _crossstore.resolve_relskel(marker),
+        "relskel": _crossstore.resolve_relskel(marker) if resolve_refs else {},
     }
     if marker.multiple:
         entry["defaultvalue"] = []
@@ -222,40 +190,29 @@ def _crossstore_structure(marker: SkeletonRefMarker, meta: dict) -> dict:
 
 
 def _record(target: type, meta: dict, *, multiple: bool) -> dict:
-    """A ``record`` bone entry — pinned against ``RecordBone``.
-
-    Records are **plain pydantic nesting**: the nested (non-table) SQLModel
-    is the ``using``-skel analogue — validation, error paths and the dump
-    shape (the plain values dict) all come natively from pydantic. Only
-    the structure entry is built here.
-    """
+    """``record`` bone entry (``RecordBone`` parity); the nested non-table SQLModel is the using-skel."""
     if getattr(target, "__table__", None) is not None:
         raise TypeError(
             f"record target {target.__name__!r} is a table model — table "
-            "models are relations, use Relationship() (analysis/01 §5.4)"
+            "models are relations, use Relationship()"
         )
     ret = {
         "type": "record",
         "emptyvalue": None,
         "multiple": multiple,
-        "indexed": False,  # like RecordBone
-        "format": meta.get("format"),  # RecordBone default: None
+        "indexed": False,
+        "format": meta.get("format"),
         "using": structure_for_model(target),
     }
     if multiple:
-        ret["defaultvalue"] = []  # like multiple bones
+        ret["defaultvalue"] = []
     return ret
 
 
 def _bone_type_marker(
     core: t.Any, field_info: t.Any, annotated_marker: BoneType | None,
 ) -> BoneType | None:
-    """Find a bone-type override: ``Annotated`` marker first, then registry.
-
-    The registry is walked along the type's MRO, so subclasses inherit the
-    bone mapping of their base type (e.g. everything derived from
-    ``CountryAlpha2`` stays a ``select.country``).
-    """
+    """``Annotated`` marker, else ``FieldInfo.metadata`` marker, else registry along the MRO."""
     if annotated_marker:
         return annotated_marker
     for item in field_info.metadata:
@@ -268,28 +225,20 @@ def _bone_type_marker(
 
 
 def _bone_for_type(core: t.Any, cons: dict, meta: dict, marker: BoneType | None) -> dict:
-    """Bone ``type`` + type-specific structure keys for a core Python type.
-
-    The bone type is decided by the **type**, never by a string parameter —
-    dedicated types (``Text``, ``Email``, ``Country``, …) carry a
-    :class:`BoneType` marker that either refines the base type's structure
-    (``replace=False``) or defines it alone (``replace=True``).
-    """
+    """Bone ``type`` + type-specific keys for a Python type; a ``replace`` marker defines the bone alone."""
     if marker and marker.replace:
         return {"type": marker.name, "emptyvalue": marker.emptyvalue, **(marker.extras or {})}
 
     def _marker_only_or_raise() -> dict:
-        # A registered semantic class (pydantic AnyUrl, EmailStr, …) may not
-        # subclass a dispatchable base — the marker alone defines the bone.
+        # registered class without a dispatchable base
         if marker:
             return {"type": marker.name, "emptyvalue": marker.emptyvalue, **(marker.extras or {})}
         raise TypeError(
-            f"type {core!r} has no bone mapping — see analysis/01 §5.2 "
-            "(map a dedicated type via viur.models.types)"
+            f"type {core!r} has no bone mapping — register one with "
+            "viur.models.register_bone_type or annotate it with BoneType"
         )
 
-    # NOTE: order matters — enum.Enum before str/int (StrEnum/IntEnum),
-    # bool before int, datetime before date.
+    # order matters: Enum before str/int, bool before int, datetime before date
     if not isinstance(core, type):
         origin = t.get_origin(core)
         args = t.get_args(core)
@@ -342,7 +291,7 @@ def _bone_for_type(core: t.Any, cons: dict, meta: dict, marker: BoneType | None)
 
 
 def _key_bone() -> dict:
-    """The system ``key`` bone — pinned against ``KeyBone`` defaults."""
+    """System ``key`` bone (``KeyBone`` defaults)."""
     return {
         "descr": "Key",
         "type": "key",
@@ -359,7 +308,9 @@ def _key_bone() -> dict:
     }
 
 
-def _bone_structure(name: str, field_info: t.Any) -> dict:
+def _bone_structure(
+    name: str, field_info: t.Any, *, resolve_refs: bool = True,
+) -> dict:
     meta = _viur_meta(field_info)
     core, annotated_marker, annotated_language, annotated_metadata = \
         _unwrap_annotation(field_info.annotation)
@@ -369,7 +320,6 @@ def _bone_structure(name: str, field_info: t.Any) -> dict:
 
     bone = {
         "descr": meta.get("descr") or field_info.title or name.replace("_", " ").title(),
-        # BaseBone parity: readOnly forces required off in the structure.
         "required": bool(required) and not readonly,
         "params": meta.get("params") or {},
         "visible": bool(meta.get("visible", True)),
@@ -381,20 +331,16 @@ def _bone_structure(name: str, field_info: t.Any) -> dict:
         "multiple": False,
     }
 
-    # Cross-store reference (SkeletonRef) — the value is the dest snapshot
-    # of a datastore skeleton; the bone is relational.<kind>.
     cross = next(
         (item for item in (*annotated_metadata, *field_info.metadata)
          if isinstance(item, SkeletonRefMarker)),
         None,
     )
     if cross is not None:
-        bone |= _crossstore_structure(cross, meta)
+        bone |= _crossstore_structure(cross, meta, resolve_refs=resolve_refs)
         return bone
 
-    # ``Language[X]`` wrapper — the type describes the data structure
-    # ({lang: value} dict); the bone shape comes from the INNER type, plus
-    # the languages list (StringBone(languages=…) analogue).
+    # Language[X]: bone shape from the inner type plus the languages list
     language = annotated_language or next(
         (item for item in field_info.metadata if isinstance(item, LanguageWrapper)), None,
     )
@@ -402,7 +348,7 @@ def _bone_structure(name: str, field_info: t.Any) -> dict:
         langs = meta.get("languages") or _types.DEFAULT_LANGUAGES
         if not langs:
             raise TypeError(
-                f"Language field {name!r} needs ViURField(languages=…) or "
+                f"Language field {name!r} needs Field(languages=…) or "
                 "viur.models.set_default_languages(…)"
             )
         inner_core, inner_marker, _, inner_metadata = _unwrap_annotation(language.inner)
@@ -411,7 +357,6 @@ def _bone_structure(name: str, field_info: t.Any) -> dict:
             inner_marker or _bone_type_marker(inner_core, field_info, None),
         )
         bone["languages"] = list(langs)
-        # language bones default to a per-language None dict (real-bone parity)
         default = field_info.default
         bone["defaultvalue"] = (
             default if default is not PydanticUndefined and default is not None
@@ -420,7 +365,7 @@ def _bone_structure(name: str, field_info: t.Any) -> dict:
         return bone
     if meta.get("languages"):
         raise TypeError(
-            f"{name!r}: ViURField(languages=…) requires a Language[…] annotation"
+            f"{name!r}: Field(languages=…) requires a Language[…] annotation"
         )
 
     marker = _bone_type_marker(core, field_info, annotated_marker)
@@ -437,25 +382,12 @@ def _bone_structure(name: str, field_info: t.Any) -> dict:
 
 
 def _computed_bone_structure(name: str, computed_info: t.Any) -> dict:
-    """Bone entry for a pydantic ``@computed_field`` — the ``compute``
-    (method ``Always``) analogue: the value is derived from the instance at
-    dump time and never stored, so the bone is always read-only and not
-    indexed (it has no column to filter or sort on).
-
-    The bone shape comes from the property's **return annotation**, through
-    the same mapping as regular fields (semantic types like ``Text`` work).
-    Bone parameters travel in the decorator's ``json_schema_extra`` under
-    the ``"viur"`` key (``descr``, ``visible``, ``params``, ``format``, …)::
-
-        @computed_field(json_schema_extra={"viur": {"descr": "Anzeigename"}})
-        @property
-        def display_name(self) -> str:
-            return f"{self.name} ({self.kind.value})"
-    """
+    """Bone entry for a ``@computed_field``: shape from the return annotation, read-only,
+    not indexed, ``compute.method = Always``; bone parameters in ``json_schema_extra["viur"]``."""
     field_info = FieldInfo.from_annotation(computed_info.return_type)
     extra = computed_info.json_schema_extra
     meta = dict(extra.get(VIUR_META_KEY) or {}) if isinstance(extra, dict) else {}
-    meta["readonly"] = True  # never writable — there is no setter
+    meta["readonly"] = True
     meta.setdefault("compute", {"method": "Always"})
     field_info.title = computed_info.title
     field_info.json_schema_extra = {VIUR_META_KEY: meta}
@@ -465,21 +397,9 @@ def _computed_bone_structure(name: str, computed_info: t.Any) -> dict:
 
 
 def relations_for_model(cls: type) -> dict:
-    """Mapped relationships: ``rel_name → {"fk", "target", "required", "multiple"}``.
-
-    Derived from the SQLAlchemy mapper, so it exists only on table models.
-    Two shapes are mapped:
-
-    - **to-one** (FK column on this table): ``fk`` names the consumed raw
-      field, the column's nullability drives ``required``.
-    - **many-to-many** (link table via ``Relationship(link_model=…)``):
-      ``fk`` is ``None``, ``multiple`` is ``True`` — the ``RelationalBone
-      multiple`` analogue.
-
-    Inverse sides — one-to-many children lists (``uselist`` without a link
-    table) and the FK-less side of a one-to-one — have no bone shape and
-    are skipped.
-    """
+    """Mapped relationships → ``{"fk", "target", "required", "multiple", …}``: to-one via FK
+    column, many-to-many via link table, association links, ``SkeletonLink`` tables.
+    Inverse sides are skipped. Table models only."""
     rel_infos = getattr(cls, "__sqlmodel_relationships__", None)
     if not rel_infos:
         return {}
@@ -487,24 +407,21 @@ def relations_for_model(cls: type) -> dict:
     if mapper is None:
         raise NotImplementedError(
             "relationships need a table model (table=True) — the FK column "
-            "defines the mapping (analysis/01 §5.4)"
+            "defines the mapping"
         )
     relations = {}
     for rel_name in rel_infos:
         prop = mapper.relationships[rel_name]
         if prop.uselist and prop.secondary is None \
                 and issubclass(prop.mapper.class_, RelationLink):
-            # association object → multiple relation WITH edge payload
-            # (the RelationalBone(using=…) analogue).
+            # association object: multiple with payload
             relations[rel_name] = _analyze_relation_link(
                 mapper.local_table, prop.mapper.class_,
             )
             continue
         if prop.uselist and prop.secondary is None \
                 and issubclass(prop.mapper.class_, SkeletonLink):
-            # link-table-backed cross-store reference (one row per
-            # datastore target) — the link model carries the marker; its
-            # extra scalar fields are edge payload (using-skel).
+            # link-table-backed cross-store reference
             link_cls = prop.mapper.class_
             parent_fk = next(
                 (column.key for column in link_cls.__mapper__.local_table.columns
@@ -549,8 +466,7 @@ def relations_for_model(cls: type) -> dict:
 
 
 def _shortkey_bone() -> dict:
-    """The ``shortkey`` system bone real RefSkels carry (raw, computed) —
-    emitted in ``relskel`` for parity; the dump does not compute it (v1)."""
+    """RefSkel ``shortkey`` bone — emitted in ``relskel``, not computed in dumps."""
     return {
         "descr": "Shortkey",
         "type": "raw",
@@ -570,24 +486,15 @@ def _shortkey_bone() -> dict:
 
 def _relational_structure(
     rel_name: str, fk_field_info: t.Any, info: dict, owner_cls: type,
+    *, resolve_refs: bool = True,
 ) -> dict:
-    """One ``relational.<kind>`` bone entry — pinned against ``RelationalBone``
-    (``format`` default ``"$(dest.name)"``, ``refKeys`` default ``{"name"}``).
-
-    Bone parameters (``descr``, ``required`` override, ``visible``, …) are
-    read from the **FK field's** ViURField metadata — the relationship
-    attribute itself is pure SQLAlchemy and carries none. Many-to-many
-    relations have no FK field; their parameters come from the owning
-    model's ``viur_relation_meta`` dict (which also overrides FK metadata
-    for to-one relations).
-    """
+    """``relational.<kind>`` bone (``RelationalBone`` parity). Bone parameters: the FK field's
+    metadata, overridden by ``viur_relation_meta`` (the only source for many-to-many)."""
     meta = _viur_meta(fk_field_info) if fk_field_info is not None else {}
     meta |= getattr(owner_cls, "viur_relation_meta", {}).get(rel_name, {})
     target = info["target"]
     kind = target._viur_kind()
-    # ``module`` must name the module SERVING the target (admins query it
-    # for selections) — explicit meta wins, then the SQLList registry, and
-    # the kind only as fallback for unserved targets.
+    # module: explicit meta > SQLList registry > kind
     module = meta.get("module") or MODULE_BY_MODEL.get(target) or kind
     readonly = bool(meta.get("readonly", False))
     required = meta["required"] if "required" in meta else info["required"]
@@ -597,7 +504,9 @@ def _relational_structure(
     ))
     relskel = {
         name: bone
-        for name, bone in structure_for_model(target, include_relations=False).items()
+        for name, bone in structure_for_model(
+            target, include_relations=False, resolve_refs=resolve_refs,
+        ).items()
         if name in ref_keys
     }
     relskel["shortkey"] = _shortkey_bone()
@@ -617,21 +526,17 @@ def _relational_structure(
         "multiple": bool(info["multiple"]),
         "module": module,
         "format": meta.get("format") or "$(dest.name)",
-        # association links carry edge payload — their scalar fields are
-        # the using-skel (RelationalBone(using=…) analogue).
         "using": (
-            _using_structure(info["link"], info["using_fields"])
+            _using_structure(
+                info["link"], info["using_fields"], resolve_refs=resolve_refs,
+            )
             if info.get("using_fields") else None
         ),
         "relskel": relskel,
     }
     if info["multiple"]:
-        # multiple bones default to an empty list (not None), which
-        # BaseBone.structure therefore emits as defaultvalue.
         bone["defaultvalue"] = []
-        # MultipleConstraints analogue: viur_relation_meta may carry
-        # {"multiple": {"min": …, "max": …, "duplicates": …}} — emitted in
-        # the bone's serialization order, enforced by viur_from_client.
+        # MultipleConstraints from viur_relation_meta["multiple"]
         if isinstance(constraints := meta.get("multiple"), dict):
             bone["multiple"] = {
                 "duplicates": bool(constraints.get("duplicates", False)),
@@ -642,8 +547,7 @@ def _relational_structure(
 
 
 def write_only_fields(cls: type) -> frozenset:
-    """Field names whose :class:`BoneType` marker is ``write_only`` —
-    their values never appear in dumps (Password/Credential semantics)."""
+    """Field names with a ``write_only`` marker."""
     out = set()
     for name, field_info in cls.model_fields.items():
         core, marker, _, _metadata = _unwrap_annotation(field_info.annotation)
@@ -660,19 +564,13 @@ def write_only_fields(cls: type) -> frozenset:
     return frozenset(out)
 
 
-def structure_for_model(cls: type, *, include_relations: bool = True) -> dict:
-    """Build the skeleton-compatible structure dict for a ViURModel class.
-
-    The primary-key field is emitted as the system ``key`` bone (clients
-    never see the raw column); an FK field consumed by a to-one relationship
-    is emitted as **one** ``relational.<kind>`` bone under the relationship's
-    name (analysis/01 §5.4); every other field maps per analysis/01 §5.
-    Unmappable types raise ``TypeError`` at class-definition time (via
-    ``ViURModel.__pydantic_init_subclass__``), not at request time.
-
-    ``include_relations=False`` builds the scalar-only structure — used for
-    ``relskel`` payloads, which also breaks relation cycles (A → B → A).
-    """
+def structure_for_model(
+    cls: type, *, include_relations: bool = True, resolve_refs: bool = True,
+) -> dict:
+    """Skeleton-compatible structure dict. Primary key → ``key`` bone; an FK consumed by a
+    to-one relation → one ``relational.<kind>`` bone under the relation's name.
+    ``include_relations=False``: scalar-only (``relskel``); ``resolve_refs=False``: no
+    datastore lookup for cross-store ``relskel``."""
     relations = relations_for_model(cls) if include_relations else {}
     consumed = {
         info["fk"]: rel_name
@@ -687,25 +585,30 @@ def structure_for_model(cls: type, *, include_relations: bool = True) -> dict:
         elif name in consumed:
             rel_name = consumed[name]
             structure[rel_name] = (
-                _relational_structure(rel_name, field_info, relations[rel_name], cls)
+                _relational_structure(
+                    rel_name, field_info, relations[rel_name], cls,
+                    resolve_refs=resolve_refs,
+                )
                 | {"sortindex": sortindex}
             )
         else:
-            structure[name] = _bone_structure(name, field_info) | {"sortindex": sortindex}
+            structure[name] = _bone_structure(
+                name, field_info, resolve_refs=resolve_refs,
+            ) | {"sortindex": sortindex}
 
-    # Many-to-many and link-backed cross-store relations have no FK field
-    # to take a position from — they are appended after the regular fields,
-    # in declaration order.
+    # relations without an FK field: appended in declaration order
     sortindex = len(cls.model_fields)
     for rel_name, info in relations.items():
         if info["fk"] is not None:
             continue
         meta = getattr(cls, "viur_relation_meta", {}).get(rel_name, {})
         if marker := info.get("crossstore"):
-            entry = _crossstore_structure(marker, meta)
+            entry = _crossstore_structure(marker, meta, resolve_refs=resolve_refs)
             entry["descr"] = meta.get("descr") or rel_name.replace("_", " ").title()
             if info.get("using_fields"):
-                entry["using"] = _using_structure(info["target"], info["using_fields"])
+                entry["using"] = _using_structure(
+                    info["target"], info["using_fields"], resolve_refs=resolve_refs,
+                )
             entry = {
                 "params": meta.get("params") or {},
                 "required": False,
@@ -717,13 +620,13 @@ def structure_for_model(cls: type, *, include_relations: bool = True) -> dict:
                 "clone_behavior": dict(CLONE_BEHAVIOR),
             } | entry
         else:
-            entry = _relational_structure(rel_name, None, info, cls)
+            entry = _relational_structure(
+                rel_name, None, info, cls, resolve_refs=resolve_refs,
+            )
         structure[rel_name] = entry | {"sortindex": sortindex}
         sortindex += 1
 
-    # pydantic ``@computed_field`` properties — read-only bones computed at
-    # dump time (see _computed_bone_structure); appended after the stored
-    # fields, in declaration order.
+    # computed fields: appended last
     for name, computed_info in cls.model_computed_fields.items():
         structure[name] = _computed_bone_structure(name, computed_info) \
             | {"sortindex": sortindex}

@@ -10,17 +10,17 @@ from skeletons import RecordRefSkel
 
 from sqlmodel import SQLModel
 
-from viur.models import ViURField, ViURModel
+from viur.models import Field, Model
 
 
 class Address(SQLModel):
-    street: str = ViURField(descr="Straße", max_length=100)
-    zip_code: int | None = ViURField(default=None, descr="PLZ")
+    street: str = Field(descr="Straße", max_length=100)
+    zip_code: int | None = Field(default=None, descr="PLZ")
 
 
-class RecordParityModel(ViURModel):
-    address: Address | None = ViURField(default=None, descr="Adresse", format="$(street)")
-    stops: list[Address] = ViURField(
+class RecordParityModel(Model):
+    address: Address | None = Field(default=None, descr="Adresse", format="$(street)")
+    stops: list[Address] = Field(
         default_factory=list, required=False, descr="Stationen", format="$(street)",
     )
 

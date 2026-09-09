@@ -1,14 +1,14 @@
-"""ViURModel — key encoding and kind derivation."""
-from viur.models import ViURField, ViURModel
+"""Model — key encoding and kind derivation."""
+from viur.models import Field, Model
 
 
-class Article(ViURModel, table=True):
+class Article(Model, table=True):
     __tablename__ = "viur_models_test_article"
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
 
 
-class Draft(ViURModel):  # no table — kind falls back to the class name
-    name: str = ViURField(default="", required=False)
+class Draft(Model):  # no table — kind falls back to the class name
+    name: str = Field(default="", required=False)
 
 
 def test_key_roundtrip():

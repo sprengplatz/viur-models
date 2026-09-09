@@ -1,4 +1,4 @@
-"""Relational structure parity — ViURModel FK relations vs. the REAL
+"""Relational structure parity — Model FK relations vs. the REAL
 ``RelationalBone``.
 
 The model twin's target table carries the same kind string as the
@@ -10,17 +10,14 @@ import json
 
 from skeletons import RelRefSkel
 
-from sqlmodel import Relationship
+from sqlmodel import Relationship, SQLModel
 
-from viur.models import ViURField, ViURModel
+from viur.models import Field, Model
 
 
-class RelTarget(ViURModel, table=True):
+class RelTarget(Model, table=True):
     __tablename__ = "viur_models_test_parity"  # same kind as ParityRefSkel
-    name: str = ViURField(descr="Name", max_length=100)
-
-
-from sqlmodel import Field, SQLModel
+    name: str = Field(descr="Name", max_length=100)
 
 
 class RelParityFanLink(SQLModel, table=True):
@@ -33,12 +30,12 @@ class RelParityFanLink(SQLModel, table=True):
     )
 
 
-class RelParityModel(ViURModel, table=True):
+class RelParityModel(Model, table=True):
     __tablename__ = "viur_models_test_relparity"
 
     viur_relation_meta = {"fans": {"descr": "Fans"}}
 
-    author_id: int | None = ViURField(
+    author_id: int | None = Field(
         default=None, foreign_key="viur_models_test_parity.id", descr="Autor",
     )
     author: RelTarget | None = Relationship()

@@ -3,13 +3,13 @@ import pytest
 from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import SQLModel, create_engine, select
 
-from viur.models import ViURField, ViURModel
+from viur.models import Field, Model
 from viur.models import db
 
 
-class DBProbe(ViURModel, table=True):
+class DBProbe(Model, table=True):
     __tablename__ = "viur_models_test_dbprobe"
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
 
 
 @pytest.fixture(autouse=True)

@@ -4,13 +4,13 @@ from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import SQLModel, select
 
 from viur.core import conf
-from viur.models import ModelsConfig, ViURField, ViURModel, install_config
+from viur.models import ModelsConfig, Field, Model, install_config
 from viur.models import db
 
 
-class ConfProbe(ViURModel, table=True):
+class ConfProbe(Model, table=True):
     __tablename__ = "viur_models_test_confprobe"
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
 
 
 @pytest.fixture(autouse=True)

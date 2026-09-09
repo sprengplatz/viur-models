@@ -12,8 +12,8 @@ from viur.models import (
     Password,
     Spatial,
     Text,
-    ViURField,
-    ViURModel,
+    Field,
+    Model,
     set_default_languages,
 )
 from viur.models import types as viur_types
@@ -21,15 +21,15 @@ from viur.models import types as viur_types
 Position = Spatial(bounds_lat=(46.0, 56.0), bounds_lng=(4.0, 17.0))
 
 
-class V2Model(ViURModel):
-    title: Language[str] = ViURField(
+class V2Model(Model):
+    title: Language[str] = Field(
         default=None, languages=("de", "en"), sa_type=JSON, descr="Titel",
     )
-    body: Language[Text] | None = ViURField(
+    body: Language[Text] | None = Field(
         default=None, languages=("de", "en"), sa_type=JSON,
     )
-    pos: Position | None = ViURField(default=None, sa_type=JSON, descr="Position")
-    pwd: Password | None = ViURField(default=None, descr="Passwort")
+    pos: Position | None = Field(default=None, sa_type=JSON, descr="Position")
+    pwd: Password | None = Field(default=None, descr="Passwort")
 
 
 STRUCTURE = V2Model.viur_structure()
@@ -65,23 +65,38 @@ def test_language_from_client_accepts_dict_and_dotted():
     assert instance.title == {"de": "Neu", "en": "New"}
 
 
+def test_partial_dotted_language_keeps_the_other_languages():
+    # SQLList.edit seeds the client data with the stored dump so unsubmitted
+    # fields keep their value; a form posting only ``title.de`` must fill in
+    # over that dict, not replace it — replacing dropped "en" entirely.
+    stored = {"title": {"de": "Hallo", "en": "Hello"}}
+    instance, errors = V2Model.viur_from_client(stored | {"title.de": "Servus"})
+    assert errors == []
+    assert instance.title == {"de": "Servus", "en": "Hello"}
+
+    # an explicitly submitted language still wins, clearing included
+    instance, errors = V2Model.viur_from_client(stored | {"title.en": ""})
+    assert errors == []
+    assert instance.title == {"de": "Hallo", "en": ""}
+
+
 def test_language_default_languages_fallback():
     set_default_languages("de", "fr")
     try:
-        class Defaulted(ViURModel):
-            name: Language[str] | None = ViURField(default=None, sa_type=JSON)
+        class Defaulted(Model):
+            name: Language[str] | None = Field(default=None, sa_type=JSON)
 
         assert Defaulted.viur_structure()["name"]["languages"] == ["de", "fr"]
     finally:
         set_default_languages()
 
     with pytest.raises(TypeError, match="set_default_languages"):
-        class Missing(ViURModel):
-            name: Language[str] | None = ViURField(default=None, sa_type=JSON)
+        class Missing(Model):
+            name: Language[str] | None = Field(default=None, sa_type=JSON)
 
     with pytest.raises(TypeError, match="Language"):
-        class NoWrapper(ViURModel):
-            name: str | None = ViURField(default=None, languages=("de",))
+        class NoWrapper(Model):
+            name: str | None = Field(default=None, languages=("de",))
 
 
 # --------------------------------------------------------------------------- #
@@ -153,8 +168,8 @@ def test_spatial_from_client_accepts_dotted_and_list():
 def test_non_replace_marker_carries_unmappable_types():
     KeyList = t.Annotated[list[str], viur_types.BoneType("keylist", extras={"foo": 1})]
 
-    class MarkerOnly(ViURModel):
-        items: KeyList | None = ViURField(default=None, sa_type=JSON)
+    class MarkerOnly(Model):
+        items: KeyList | None = Field(default=None, sa_type=JSON)
 
     bone = MarkerOnly.viur_structure()["items"]
     assert (bone["type"], bone["foo"], bone["emptyvalue"]) == ("keylist", 1, None)
@@ -164,22 +179,22 @@ def test_non_replace_marker_carries_unmappable_types():
 # pydantic ecosystem types                                                     #
 # --------------------------------------------------------------------------- #
 
-class EcoModel(ViURModel):
-    mail: EmailStr | None = ViURField(default=None)
-    site: AnyUrl | None = ViURField(default=None, sa_type=String)
-    tint: PydanticColor | None = ViURField(default=None, sa_type=String)
-    short: constr(max_length=12) | None = ViURField(default=None)
+class EcoModel(Model):
+    mail: EmailStr | None = Field(default=None)
+    site: AnyUrl | None = Field(default=None, sa_type=String)
+    tint: PydanticColor | None = Field(default=None, sa_type=String)
+    short: constr(max_length=12) | None = Field(default=None)
 
 
 def test_exclusive_bounds_feed_the_structure():
     from pydantic import ByteSize, NegativeInt, PositiveInt, conint
 
-    class Bounded(ViURModel):
-        count: PositiveInt | None = ViURField(default=None)       # Gt(0) -> min 1
-        debt: NegativeInt | None = ViURField(default=None)        # Lt(0) -> max -1
-        window: conint(gt=2, lt=10) | None = ViURField(default=None)
-        size: ByteSize | None = ViURField(default=None)           # int subclass -> numeric
-        rate: float | None = ViURField(default=None, schema_extra={"json_schema_extra": {}})
+    class Bounded(Model):
+        count: PositiveInt | None = Field(default=None)       # Gt(0) -> min 1
+        debt: NegativeInt | None = Field(default=None)        # Lt(0) -> max -1
+        window: conint(gt=2, lt=10) | None = Field(default=None)
+        size: ByteSize | None = Field(default=None)           # int subclass -> numeric
+        rate: float | None = Field(default=None, schema_extra={"json_schema_extra": {}})
 
     structure = Bounded.viur_structure()
     assert structure["count"]["min"] == 1
@@ -189,8 +204,8 @@ def test_exclusive_bounds_feed_the_structure():
     # floats have no exact inclusive bound for gt/lt — int64 default stays
     from pydantic import confloat
 
-    class FloatBounded(ViURModel):
-        factor: confloat(gt=0) | None = ViURField(default=None)
+    class FloatBounded(Model):
+        factor: confloat(gt=0) | None = Field(default=None)
 
     assert FloatBounded.viur_structure()["factor"]["min"] == -9223372036854775806
 

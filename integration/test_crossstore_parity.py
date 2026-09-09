@@ -11,11 +11,11 @@ from skeletons import RelRefSkel
 
 from sqlalchemy import JSON
 
-from viur.models import SkeletonRef, ViURField, ViURModel
+from viur.models import SkeletonRef, Field, Model
 
 
-class XStoreParityModel(ViURModel):
-    author: SkeletonRef("viur_models_test_parity", ref_keys=("name",)) | None = ViURField(
+class XStoreParityModel(Model):
+    author: SkeletonRef("viur_models_test_parity", ref_keys=("name",)) | None = Field(
         default=None, sa_type=JSON, descr="Autor",
     )
 

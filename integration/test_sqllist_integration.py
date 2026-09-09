@@ -3,7 +3,7 @@
 The unit suite fakes the render; here the module runs with the real
 ``EnvelopeRenderMixin`` over the real ``DefaultRender`` against SQLite —
 asserting the actual wire format (the protocol gate in viur-actions lets
-ViURModels through since the isinstance→protocol change).
+Models through since the isinstance→protocol change).
 
 Actions are invoked through ``Method._func`` — the raw bodies — because
 core's ``Method.__call__`` executes the ``@skey``/SSL guards, which need a
@@ -15,18 +15,18 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, create_engine
 
-from viur.actions.render_v2 import make_envelope_render_cls
+from viur.actions import make_envelope_render_cls
 from viur.core import errors
 from viur.core.render.json.default import DefaultRender
 
-from viur.models import ViURField, ViURModel, db
+from viur.models import Field, Model, db
 from viur.models.sqllist import SQLList
 
 
-class IntTicket(ViURModel, table=True):
+class IntTicket(Model, table=True):
     __tablename__ = "viur_models_int_ticket"
-    name: str = ViURField(descr="Name", max_length=50)
-    rating: int | None = ViURField(default=None, ge=1, le=5)
+    name: str = Field(descr="Name", max_length=50)
+    rating: int | None = Field(default=None, ge=1, le=5)
 
 
 class TicketsModule(SQLList):
@@ -95,14 +95,16 @@ def test_list_envelope_carries_cursor_and_orders(module):
     out = json.loads(_call(module, "list", limit="2", orderby="name", orderdir="desc"))
     assert (out["action"], out["datatype"], out["module"]) == ("list", "list", "tickets")
     assert [row["name"] for row in out["data"]] == ["c", "b"]
-    assert out["orders"] == [{"field": "name", "dir": "desc"}]
-    assert out["cursor"]
+    # envelope v2: cursor/orders travel in the ``meta`` object
+    assert out["meta"]["orders"] == [{"field": "name", "dir": "desc"}]
+    assert out["meta"]["cursor"]
 
     page2 = json.loads(_call(
-        module, "list", limit="2", orderby="name", orderdir="desc", cursor=out["cursor"],
+        module, "list", limit="2", orderby="name", orderdir="desc",
+        cursor=out["meta"]["cursor"],
     ))
     assert [row["name"] for row in page2["data"]] == ["a"]
-    assert page2["cursor"] is None
+    assert page2["meta"]["cursor"] is None
 
 
 def test_delete_returns_the_entity(module):

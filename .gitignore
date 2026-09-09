@@ -36,3 +36,4 @@ site/
 .venv/
 venv/
 env/
+mkdocs.local.yml

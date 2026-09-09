@@ -2,7 +2,7 @@
 
 To-one relations: the FK field + ``Relationship()`` emit ONE
 ``relational.<kind>`` bone under the relationship's name; bone parameters
-come from the FK field's ViURField metadata; ``dest`` payloads carry
+come from the FK field's Field metadata; ``dest`` payloads carry
 ``key`` + the target's ``viur_ref_keys``.
 """
 import typing as t
@@ -11,24 +11,24 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Field, Relationship, SQLModel, create_engine
 
-from viur.models import ViURField, ViURModel, db
+from viur.models import Field, Model, db
 from viur.models.sqllist import SQLList
 
 from tests.test_sqllist import RecordingRender
 
 
-class Author(ViURModel, table=True):
+class Author(Model, table=True):
     __tablename__ = "viur_models_test_author"
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
     posts: list["Post"] = Relationship(back_populates="author")  # to-many: no bone
 
 
-class Fan(ViURModel, table=True):  # m2m target WITH ref keys (name)
+class Fan(Model, table=True):  # m2m target WITH ref keys (name)
     __tablename__ = "viur_models_test_fan"
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
 
 
-class PostFanLink(SQLModel, table=True):  # plain link table, no ViURModel
+class PostFanLink(SQLModel, table=True):  # plain link table, no Model
     __tablename__ = "viur_models_test_postfan"
     post_id: int | None = Field(
         default=None, foreign_key="viur_models_test_post.id", primary_key=True,
@@ -48,13 +48,13 @@ class PostTagLink(SQLModel, table=True):
     )
 
 
-class Post(ViURModel, table=True):
+class Post(Model, table=True):
     __tablename__ = "viur_models_test_post"
 
     viur_relation_meta = {"tags": {"descr": "Schlagworte"}}
 
-    title: str = ViURField(descr="Titel", max_length=100)
-    author_id: int | None = ViURField(
+    title: str = Field(descr="Titel", max_length=100)
+    author_id: int | None = Field(
         default=None, foreign_key="viur_models_test_author.id", descr="Autor",
     )
     author: Author | None = Relationship(back_populates="posts")
@@ -62,20 +62,20 @@ class Post(ViURModel, table=True):
     tags: list["Tag"] = Relationship(link_model=PostTagLink)        # multiple, key-only target
 
 
-class StrictPost(ViURModel, table=True):
+class StrictPost(Model, table=True):
     __tablename__ = "viur_models_test_strictpost"
-    author_id: int = ViURField(foreign_key="viur_models_test_author.id")
+    author_id: int = Field(foreign_key="viur_models_test_author.id")
     author: Author = Relationship()
 
 
-class Tag(ViURModel, table=True):  # no "name" field — ref keys reduce to "key"
+class Tag(Model, table=True):  # no "name" field — ref keys reduce to "key"
     __tablename__ = "viur_models_test_tag"
-    label: str = ViURField(default="", required=False)
+    label: str = Field(default="", required=False)
 
 
-class Tagged(ViURModel, table=True):
+class Tagged(Model, table=True):
     __tablename__ = "viur_models_test_tagged"
-    tag_id: int | None = ViURField(default=None, foreign_key="viur_models_test_tag.id")
+    tag_id: int | None = Field(default=None, foreign_key="viur_models_test_tag.id")
     tag: Tag | None = Relationship()
 
 
@@ -101,6 +101,42 @@ def module():
     db.reset()
 
 
+def test_bonelist_loads_only_the_requested_relations(module):
+    """Relations are selectin-loaded per bonelist; the FK of a requested to-one
+    relation is loaded (the dest needs it), unrequested relations stay unloaded."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import inspect as sa_inspect
+    from viur.core import current
+
+    author = _author("Ann")
+    with db.get_session() as session:
+        fan = Fan(name="Bob")
+        session.add(fan)
+    module.add(title="p", author=author.viur_key, fans=[fan.viur_key], skey="csrf")
+
+    def _request(bonelist):
+        current.request.set(SimpleNamespace(
+            skey_checked=True, isPostRequest=True,
+            request=SimpleNamespace(headers={"X-VIUR-BONELIST": bonelist}),
+        ))
+
+    _request("author")                                   # to-one: fk column loaded
+    verb, rows = module.list()
+    row = rows[0]
+    assert set(row.dump()) == {"key", "author"}
+    assert row.dump()["author"]["dest"]["name"] == "Ann"
+    assert {"fans", "tags", "title"} <= sa_inspect(row).unloaded
+    assert "author_id" not in sa_inspect(row).unloaded
+
+    _request("fans")                                     # many-to-many: no fk
+    verb, rows = module.list()
+    row = rows[0]
+    assert set(row.dump()) == {"key", "fans"}
+    assert row.dump()["fans"][0]["dest"]["name"] == "Bob"
+    assert {"author", "tags"} <= sa_inspect(row).unloaded
+
+
 def _author(name="Alice"):
     with db.get_session() as session:
         author = Author(name=name)
@@ -117,7 +153,7 @@ def test_relation_emits_one_relational_bone():
     assert "author_id" not in structure  # consumed by the relationship
     bone = structure["author"]
     assert bone["type"] == "relational.viur_models_test_author"
-    assert bone["descr"] == "Autor"  # from the FK field's ViURField
+    assert bone["descr"] == "Autor"  # from the FK field's Field
     assert (bone["module"], bone["format"], bone["using"]) == (
         "viur_models_test_author", "$(dest.name)", None,
     )
@@ -134,16 +170,16 @@ def test_to_many_side_has_no_bone():
     assert "posts" not in Author.viur_structure()
 
 
-class OneOwner(ViURModel, table=True):
+class OneOwner(Model, table=True):
     __tablename__ = "viur_models_test_oneowner"
     profile: t.Optional["Profile"] = Relationship(
         back_populates="owner", sa_relationship_kwargs={"uselist": False},
     )
 
 
-class Profile(ViURModel, table=True):
+class Profile(Model, table=True):
     __tablename__ = "viur_models_test_profile"
-    owner_id: int | None = ViURField(
+    owner_id: int | None = Field(
         default=None, foreign_key="viur_models_test_oneowner.id",
     )
     owner: OneOwner | None = Relationship(back_populates="profile")
@@ -217,13 +253,13 @@ def test_from_client_empty_clears_the_relation():
 
 
 def test_relational_bone_module_resolves_from_registered_sqllist(module):
-    class Genre(ViURModel, table=True):
+    class Genre(Model, table=True):
         __tablename__ = "viur_models_test_genre"
-        name: str = ViURField(default="", required=False)
+        name: str = Field(default="", required=False)
 
-    class Song(ViURModel, table=True):
+    class Song(Model, table=True):
         __tablename__ = "viur_models_test_song"
-        genre_id: int | None = ViURField(
+        genre_id: int | None = Field(
             default=None, foreign_key="viur_models_test_genre.id",
         )
         genre: Genre | None = Relationship()
@@ -248,10 +284,10 @@ def test_relational_bone_module_resolves_from_registered_sqllist(module):
     assert Song.viur_structure()["genre"]["module"] == "genres"
 
     # explicit viur_relation_meta override beats the registry
-    class Song2(ViURModel, table=True):
+    class Song2(Model, table=True):
         __tablename__ = "viur_models_test_song2"
         viur_relation_meta = {"genre": {"module": "custom_genres"}}
-        genre_id: int | None = ViURField(
+        genre_id: int | None = Field(
             default=None, foreign_key="viur_models_test_genre.id",
         )
         genre: Genre | None = Relationship()
@@ -396,14 +432,14 @@ class ConstrainedFanLink(SQLModel, table=True):
     )
 
 
-class ConstrainedPost(ViURModel, table=True):
+class ConstrainedPost(Model, table=True):
     __tablename__ = "viur_models_test_constrainedpost"
 
     viur_relation_meta = {
         "fans": {"multiple": {"min": 1, "max": 2, "duplicates": False}},
     }
 
-    title: str = ViURField(default="", required=False)
+    title: str = Field(default="", required=False)
     fans: list[Fan] = Relationship(link_model=ConstrainedFanLink)
 
 
@@ -475,3 +511,23 @@ def test_edit_keeps_relation_when_unsubmitted_and_can_change_it(module):
     assert [tuple(e.fieldPath) for e in form.errors] == [("author",)]
     _, viewed = module.view(created.viur_key)
     assert viewed.author_id == bob.id
+
+def test_list_ignores_orderby_on_relations(module):
+    """Regression: ``orderby`` shared the structure/readonly check with the
+    filters but NOT their unqueryable set — a relation name reached
+    ``order_by(<relationship>.asc())``, which raises ``NotImplementedError``
+    (a relationship property has no ordering comparator) and surfaced as a
+    500 instead of being ignored like any unusable query parameter.
+    """
+    alice = _author("Alice")
+    module.add(title="Hello", author=alice.viur_key, skey="csrf")
+
+    for relation in ("author", "fans", "tags"):
+        assert relation in Post.viur_structure()          # it IS a known bone …
+        _, result = module.list(orderby=relation)
+        assert result.get_orders() == []                  # … but never orderable
+        assert [row.title for row in result] == ["Hello"]  # and does not blow up
+
+    # a plain column still orders (the guard is not over-broad)
+    _, result = module.list(orderby="title")
+    assert result.get_orders() == [("title", "asc")]

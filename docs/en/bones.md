@@ -1,16 +1,11 @@
 # Bone reference
 
-How **every** viur-core bone is declared on a skeleton — and the
-equivalent field definition on a `ViURModel`. Mapped bones emit the
-**same structure and dump shapes** (verified bone-by-bone against the
-real classes by the integration suite), so clients cannot tell the two
-apart.
-
-The rule of thumb: **the bone type is decided by the Python type**, never
-by a string parameter; everything pydantic/SQL can already express
-(`max_length`, `ge`/`le`, nullability, defaults) is *derived*, only the
-ViUR-specific parameters (`descr`, `visible`, `params`, …) go through
-[`ViURField`][viur.models.ViURField].
+Every viur-core bone next to its `Model` field. Mapped bones emit the same
+structure and dump shapes (verified bone-by-bone by the integration suite).
+**The Python type decides the bone type**; what pydantic/SQL express
+(`max_length`, `ge`/`le`, nullability, defaults) is derived, ViUR-specific
+parameters (`descr`, `visible`, `params`, …) go through
+[`Field`][viur.models.Field].
 
 ## Overview — all bones
 
@@ -31,7 +26,7 @@ ViUR-specific parameters (`descr`, `visible`, `params`, …) go through
 | `UriBone` | `uri` | `viur.models.Uri` | ✅ parity (hints emitted as defaults) |
 | `RawBone` | `raw` | `viur.models.Raw` | ✅ parity |
 | `CodeBone` / `JinjaBone` / `LogicsBone` / `PythonBone` | `raw.code` | `viur.models.Code` | ✅ parity (shared type string) |
-| `JsonBone` | `raw.json` | `viur.models.Json` (+ `sa_type=JSON`) | ✅ parity (`schema` v2) |
+| `JsonBone` | `raw.json` | `viur.models.Json` (+ `sa_type=JSON`) | ✅ parity (`schema` emitted empty) |
 | `UidBone` | `uid` | `viur.models.Uid` | ⚠️ structure parity; server-side generation is your hook's job |
 | `KeyBone` | `key` | automatic (`id` from the base) | ✅ parity |
 | `RelationalBone` | `relational.<kind>` | FK field + `Relationship()` | ✅ parity |
@@ -40,7 +35,7 @@ ViUR-specific parameters (`descr`, `visible`, `params`, …) go through
 | `UserBone` | `relational.user` | `viur.models.UserRef()` | ✅ structure parity; dest snapshot at write |
 | `FileBone` / `ImageBone` | `relational.tree.leaf.file.file` | `viur.models.FileRef()` | ⚠️ reference only — no upload handling |
 | `TreeLeafBone` / `TreeNodeBone` | `relational.tree.*` | `SkeletonRef(kind, type_suffix="tree.leaf")` | ✅ structure parity |
-| `RecordBone` / `AddressBone` | `record` | nested `ViURRecord` (+ `RecordJSON`) | ✅ parity — plain pydantic nesting |
+| `RecordBone` / `AddressBone` | `record` | nested `Record` (+ `RecordJSON`) | ✅ parity — plain pydantic nesting |
 | `SpatialBone` | `spatial` | `viur.models.Spatial(bounds_lat=…, bounds_lng=…)` | ✅ parity |
 | `PasswordBone` | `password` | `viur.models.Password` | ⚠️ write-only enforced; hashing stays in your hooks |
 | `CaptchaBone` | `captcha` | — | ➖ request-time verification, no storage |
@@ -60,16 +55,16 @@ ViUR-specific parameters (`descr`, `visible`, `params`, …) go through
     )
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
-    name: str = ViURField(descr="Name", max_length=100)
+    name: str = Field(descr="Name", max_length=100)
     ```
 
 `required` is derived: a non-`Optional` type without a default is
 required. `maxlength`/`minlength` come from `max_length`/`min_length`
 (default 254, like `StringBone`). An optional string is
-`name: str | None = ViURField(default=None, …)`.
+`name: str | None = Field(default=None, …)`.
 
 ## TextBone
 
@@ -79,18 +74,17 @@ required. `maxlength`/`minlength` come from `max_length`/`min_length`
     message = TextBone(descr="Nachricht")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import Text
 
-    message: Text = ViURField(default="", required=False, descr="Nachricht")
+    message: Text = Field(default="", required=False, descr="Nachricht")
     ```
 
 `Text` is `Annotated[str, BoneType("text", …)]` — the column stays a
-plain string. v1 divergence: `valid_html` is emitted as `null` (the
-core default HTML set is core-version-dependent); clients fall back to
-their default.
+plain string. `valid_html` is emitted as `null`, since the core default
+HTML set depends on the core version; clients fall back to their own.
 
 ## EmailBone / PhoneBone / CredentialBone
 
@@ -102,14 +96,14 @@ their default.
     secret = CredentialBone(descr="API-Secret")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import Credential, Email, Phone
 
-    mail: Email | None = ViURField(default=None, descr="E-Mail")
-    phone: Phone | None = ViURField(default=None, descr="Telefon", max_length=15)
-    secret: Credential | None = ViURField(default=None, visible=False, descr="API-Secret")
+    mail: Email | None = Field(default=None, descr="E-Mail")
+    phone: Phone | None = Field(default=None, descr="Telefon", max_length=15)
+    secret: Credential | None = Field(default=None, visible=False, descr="API-Secret")
     ```
 
 All three are `str` refinements — the column stays a string. `Phone`
@@ -130,15 +124,15 @@ instance for your module's hooks.
     sortindex = SortIndexBone()
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import SortIndex
 
-    rating: int | None = ViURField(default=None, ge=1, le=5, descr="Bewertung")
-    price: Decimal | None = ViURField(default=None, decimal_places=2, descr="Preis")
-    factor: float = ViURField(default=1.0, descr="Faktor")
-    sortindex: SortIndex | None = ViURField(default=None)
+    rating: int | None = Field(default=None, ge=1, le=5, descr="Bewertung")
+    price: Decimal | None = Field(default=None, decimal_places=2, descr="Preis")
+    factor: float = Field(default=1.0, descr="Faktor")
+    sortindex: SortIndex | None = Field(default=None)
     ```
 
 `min`/`max` come from `ge`/`le` (defaults: int64 bounds, like
@@ -156,10 +150,10 @@ floats keep `decimal: false`, exactly like the real bones.
     active = BooleanBone(descr="Aktiv", defaultValue=True)
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
-    active: bool = ViURField(default=True, descr="Aktiv")
+    active: bool = Field(default=True, descr="Aktiv")
     ```
 
 ## DateBone
@@ -172,14 +166,14 @@ floats keep `decimal: false`, exactly like the real bones.
     slot = DateBone(descr="Uhrzeit", date=False)      # time only
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from datetime import date, datetime, time
 
-    due: datetime | None = ViURField(default=None, descr="Fällig am")
-    day: date | None = ViURField(default=None, descr="Tag")
-    slot: time | None = ViURField(default=None, descr="Uhrzeit")
+    due: datetime | None = Field(default=None, descr="Fällig am")
+    day: date | None = Field(default=None, descr="Tag")
+    slot: time | None = Field(default=None, descr="Uhrzeit")
     ```
 
 The `date`/`time` structure flags come from the Python type. Values dump
@@ -197,17 +191,17 @@ normalized to UTC.
     })
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     class EntryKind(enum.Enum):
         PRAISE = "praise"
         COMPLAINT = "complaint"
 
-    kind: EntryKind = ViURField(descr="Art")
+    kind: EntryKind = Field(descr="Art")
 
     # or via Literal, with explicit labels:
-    status: t.Literal["new", "done"] | None = ViURField(
+    status: t.Literal["new", "done"] | None = Field(
         default="new", descr="Status",
         values={"new": "Neu", "done": "Fertig"},
         sa_type=String,   # SQLModel cannot map Literal to a column itself
@@ -226,17 +220,16 @@ needs an explicit `sa_type`.
     country = SelectCountryBone(descr="Land", values="dach")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import Country
 
-    country: Country | None = ViURField(default=None, descr="Land")
+    country: Country | None = Field(default=None, descr="Land")
     ```
 
 `Country` is pydantic-extra-types' `CountryAlpha2` — validation for
-free; `values` come from pycountry (full ISO-3166 set, no subset
-support in v1).
+free; `values` come from pycountry, always the full ISO-3166 set.
 
 ## ColorBone / UriBone
 
@@ -247,17 +240,17 @@ support in v1).
     website = UriBone(descr="Webseite")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import Color, Uri
 
-    tint: Color | None = ViURField(default=None, descr="Farbe")
-    website: Uri | None = ViURField(default=None, descr="Webseite")
+    tint: Color | None = Field(default=None, descr="Farbe")
+    website: Uri | None = Field(default=None, descr="Webseite")
     ```
 
 `Uri` emits `UriBone`'s hint set (`accepted_protocols`, allow-lists, …)
-with the bone's defaults; the hints are client-side in v1 — add pydantic
+with the bone's defaults. The hints are client-side; add pydantic
 validation (`schema_extra={"pattern": …}`) where you need it enforced.
 
 ## RawBone / CodeBone / JsonBone
@@ -270,20 +263,20 @@ validation (`schema_extra={"pattern": …}`) where you need it enforced.
     data = JsonBone(descr="Daten")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from sqlalchemy import JSON
     from viur.models import Code, Json, Raw
 
-    blob: Raw | None = ViURField(default=None, descr="Blob")
-    template: Code | None = ViURField(default=None, descr="Template")
-    data: Json | None = ViURField(default=None, sa_type=JSON, descr="Daten")
+    blob: Raw | None = Field(default=None, descr="Blob")
+    template: Code | None = Field(default=None, descr="Template")
+    data: Json | None = Field(default=None, sa_type=JSON, descr="Daten")
     ```
 
 `Code` and `Json` are unindexed, like their bones. `Json` needs an
 explicit `sa_type=JSON` — SQLModel cannot map `dict` to a column on its
-own. `JsonBone`'s `schema` validation is emitted empty (v2).
+own. `JsonBone`'s `schema` validation is emitted empty.
 
 ## UidBone
 
@@ -293,17 +286,17 @@ own. `JsonBone`'s `schema` validation is emitted empty (v2).
     uid = UidBone()
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import Uid
 
-    uid: Uid | None = ViURField(default=None)
+    uid: Uid | None = Field(default=None)
     ```
 
 Structure parity is complete (readonly, unique lock, `compute: Once`,
-`*`-pattern) — but v1 does **not** generate the value; fill it in your
-module's `onAdd` hook (e.g. from the row id after flush).
+`*`-pattern). The value is **not** generated; fill it in your module's
+`onAdd` hook, e.g. from the row id after flush.
 
 ## RelationalBone (single)
 
@@ -317,10 +310,10 @@ module's `onAdd` hook (e.g. from the row id after flush).
     )
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
-    category_id: int | None = ViURField(
+    category_id: int | None = Field(
         default=None, foreign_key="example_category.id", descr="Kategorie",
     )
     category: ExampleCategory | None = Relationship()
@@ -336,9 +329,9 @@ FK's nullability (`int` instead of `int | None` → required).
 Which target fields appear in `relskel`/`dest` is the target's decision:
 
 ```python
-class ExampleCategory(ViURModel, table=True):
+class ExampleCategory(Model, table=True):
     viur_ref_keys = ("name",)   # default — the refKeys analogue
-    name: str = ViURField(descr="Name", max_length=50)
+    name: str = Field(descr="Name", max_length=50)
 ```
 
 ## RelationalBone (multiple)
@@ -354,7 +347,7 @@ class ExampleCategory(ViURModel, table=True):
     )
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     class ExampleEntryTagLink(SQLModel, table=True):   # plain link table
@@ -365,7 +358,7 @@ class ExampleCategory(ViURModel, table=True):
             default=None, foreign_key="example_tag.id", primary_key=True,
         )
 
-    class ExampleEntry(ViURModel, table=True):
+    class ExampleEntry(Model, table=True):
         viur_relation_meta = {"tags": {"descr": "Schlagworte"}}
 
         tags: list[ExampleTag] = Relationship(link_model=ExampleEntryTagLink)
@@ -386,25 +379,26 @@ Multiple bones sort after the regular fields.
     body = TextBone(descr="Inhalt", languages=["de", "en"])
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from sqlalchemy import JSON
     from viur.models import Language, Text
 
-    title: Language[str] = ViURField(
+    title: Language[str] = Field(
         default=None, languages=("de", "en"), sa_type=JSON, descr="Titel",
     )
-    body: Language[Text] | None = ViURField(default=None, sa_type=JSON, descr="Inhalt")
+    body: Language[Text] | None = Field(default=None, sa_type=JSON, descr="Inhalt")
     ```
 
 `Language[X]` is a wrapper type — like `list[X]`, the type describes the
 data structure (a `{lang: value}` dict, stored as a JSON column). The
 bone shape comes from the inner type (`str`/`Text`), plus the `languages`
-list from `ViURField(languages=…)` or a project-wide
+list from `Field(languages=…)` or a project-wide
 `set_default_languages("de", "en")` at app boot. Dumps normalize to all
-declared languages; client input is accepted dotted (`title.de=…`, like
-core's fromClient) and as a dict.
+declared languages; client input is accepted dotted (`title.de=…`) and as a
+dict — a partial dotted submission merges into the stored value, the other
+languages survive an edit.
 
 ## PasswordBone
 
@@ -414,12 +408,12 @@ core's fromClient) and as a dict.
     pwd = PasswordBone(descr="Passwort")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import Password
 
-    pwd: Password | None = ViURField(default=None, descr="Passwort")
+    pwd: Password | None = Field(default=None, descr="Passwort")
     ```
 
 Structure parity is complete (complexity `tests`, `test_threshold`), and
@@ -439,7 +433,7 @@ database.
     )
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from sqlalchemy import JSON
@@ -447,7 +441,7 @@ database.
 
     Position = Spatial(bounds_lat=(46.0, 56.0), bounds_lng=(4.0, 17.0))
 
-    pos: Position | None = ViURField(default=None, sa_type=JSON, descr="Position")
+    pos: Position | None = Field(default=None, sa_type=JSON, descr="Position")
     ```
 
 `Spatial(...)` is a type **factory** (bounds are per-field). Values are
@@ -467,10 +461,10 @@ filter via `sqlFilter` if you need geo queries.
     )
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
-    class Entry(ViURModel, table=True):
+    class Entry(Model, table=True):
         viur_relation_meta = {
             "crew": {"descr": "Crew",
                      "multiple": {"min": 1, "max": 2, "duplicates": False}},
@@ -497,26 +491,26 @@ with `Invalid` errors before anything touches the database.
                        format="$(street)", multiple=True)
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
-    from viur.models import RecordJSON, ViURRecord
+    from viur.models import RecordJSON, Record
 
-    class Address(ViURRecord):              # ViURModel without table=True/system fields
-        street: str = ViURField(descr="Straße", max_length=100)
-        zip_code: int | None = ViURField(default=None, descr="PLZ")
+    class Address(Record):              # Model without table=True/system fields
+        street: str = Field(descr="Straße", max_length=100)
+        zip_code: int | None = Field(default=None, descr="PLZ")
 
-    address: Address | None = ViURField(
+    address: Address | None = Field(
         default=None, sa_type=RecordJSON(Address), descr="Adresse", format="$(street)",
     )
-    stops: list[Address] = ViURField(
+    stops: list[Address] = Field(
         default_factory=list, sa_type=RecordJSON(Address),
         required=False, descr="Stationen", format="$(street)",
     )
     ```
 
-Records are **plain pydantic nesting** — `ViURRecord` is the `RelSkel`
-analogue: a `ViURModel` without `table=True` and without the system
+Records are **plain pydantic nesting** — `Record` is the `RelSkel`
+analogue: a `Model` without `table=True` and without the system
 fields (no identity, no key). Validation, error paths (`["address", "street"]`)
 and the dump shape (the plain values dict, no wrapper) come natively.
 `list[Address]` is the `multiple=True` shape. viur-models adds only the
@@ -534,10 +528,10 @@ validated type **is** the declaration:
 from pydantic import AnyUrl, EmailStr, constr
 from pydantic_extra_types.color import Color
 
-mail: EmailStr | None = ViURField(default=None)                    # str.email
-site: AnyUrl | None = ViURField(default=None, sa_type=String)      # uri
-tint: Color | None = ViURField(default=None, sa_type=String)       # color
-short: constr(max_length=12) | None = ViURField(default=None)      # str, maxlength 12
+mail: EmailStr | None = Field(default=None)                    # str.email
+site: AnyUrl | None = Field(default=None, sa_type=String)      # uri
+tint: Color | None = Field(default=None, sa_type=String)       # color
+short: constr(max_length=12) | None = Field(default=None)      # str, maxlength 12
 ```
 
 Notes (verified against pydantic 2.13 / pydantic-extra-types 2.x):
@@ -584,7 +578,7 @@ Notes (verified against pydantic 2.13 / pydantic-extra-types 2.x):
                           module="example_tag", multiple=True, using=WeightUsing)
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from viur.models import RelationLink
@@ -594,7 +588,7 @@ Notes (verified against pydantic 2.13 / pydantic-extra-types 2.x):
         entry_id: int | None = Field(default=None, foreign_key="example_entry.id", primary_key=True)
         tag_id: int | None = Field(default=None, foreign_key="example_tag.id", primary_key=True)
         tag: ExampleTag = Relationship()                 # the dest side
-        weight: int = ViURField(default=0, ge=0, le=10, descr="Gewichtung")
+        weight: int = Field(default=0, ge=0, le=10, descr="Gewichtung")
 
     tags: list[EntryTagLink] = Relationship(
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},   # required
@@ -621,15 +615,15 @@ cross-store references.
     node = TreeNodeBone(descr="Ordner", kind="myfolder")
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     from sqlalchemy import JSON
     from viur.models import FileRef, SkeletonRef, UserRef
 
-    owner: UserRef() | None = ViURField(default=None, sa_type=JSON, descr="Besitzer")
-    attachment: FileRef() | None = ViURField(default=None, sa_type=JSON, descr="Anhang")
-    node: SkeletonRef("myfolder", type_suffix="tree.node") | None = ViURField(
+    owner: UserRef() | None = Field(default=None, sa_type=JSON, descr="Besitzer")
+    attachment: FileRef() | None = Field(default=None, sa_type=JSON, descr="Anhang")
+    node: SkeletonRef("myfolder", type_suffix="tree.node") | None = Field(
         default=None, sa_type=JSON, descr="Ordner",
     )
     ```
@@ -661,22 +655,18 @@ The base carries the datastore `key` (part of the primary key) and the
 `multiple` constraints). Both shapes emit the identical bone structure.
 
 On client input (an opaque datastore key, or the dump's
-`{"dest": {"key": …}}`) the target is **read from the datastore** and the
-snapshot is rebuilt — actively setting an unknown key is rejected; a
-roundtripped snapshot whose target has since been **deleted** is kept, so
-a vanished target never blocks unrelated edits. Between edits snapshots can go stale — two repair paths exist, mirroring
-core's `updateRelations`:
+`{"dest": {"key": …}}`) the target is read from the datastore and the
+snapshot rebuilt — an unknown key is rejected; a roundtripped snapshot whose
+target has been deleted is kept. Snapshots go stale between edits — two repair
+paths, mirroring core's `updateRelations`:
 
-- **Automatic** (recommended): `viur.models.install_refresh_hooks()` at
-  app boot wraps `Skeleton.postSavedHandler`/`postDeletedHandler` — the
-  seam every skeleton write/delete passes — and defers
-  `refresh_for_target` for **referenced kinds only** (deletes default to
-  `missing="set_null"`), exactly like core defers `update_relations`.
-  Under the hood, SQLList maintains a reverse index
-  (`viur_models_relations`: target key → table/row/field), so only the
-  affected rows are touched. Caveat: a skeleton class overriding
-  `postSavedHandler` without calling `super()` bypasses the hook — wire
-  such modules manually:
+- **Automatic**: `install_refresh_hooks()` at boot wraps
+  `Skeleton.postSavedHandler`/`postDeletedHandler` and defers
+  `refresh_for_target` for referenced kinds (deletes default to
+  `missing="set_null"`), resolving the affected rows over the
+  `viur_models_relations` reverse index that `SQLList` maintains. A skeleton
+  overriding the handler without `super()` must call it from its own
+  `onEdited`/`onDeleted`:
 
   ```python
   from viur.core.tasks import CallDeferred
@@ -690,13 +680,12 @@ core's `updateRelations`:
           _refresh(str(skel["key"]))
   ```
 
-- **Full sweep**: `refresh_crossstore(Model, missing=…)` re-reads every
-  reference (table scan for JSON columns) — the cron-style safety net.
+- **Full sweep**: `refresh_crossstore(Model, missing=…)` — table scan for
+  JSON columns, `key` lookup for `SkeletonLink` tables.
 
-With `set_null`, references to deleted targets clear: single → `None`,
-JSON lists drop the entry, `SkeletonLink` rows are deleted
-(`SkeletonLink` tables need no index — their `key` column is one). `FileRef` is a *reference* —
-upload/serving stays with the viur file module.
+`set_null` clears single references, drops list entries and deletes
+`SkeletonLink` rows. `FileRef` is a reference — upload/serving stays with the
+file module.
 
 ## System bones (automatic)
 
@@ -706,11 +695,11 @@ upload/serving stays with the viur file module.
     # key, creationdate, changedate — added by the Skeleton base
     ```
 
-=== "ViURModel"
+=== "Model"
 
     ```python
     # id (emitted as the "key" bone), creationdate, changedate —
-    # come from the ViURModel base class; nothing to declare.
+    # come from the Model base class; nothing to declare.
     ```
 
 `key` is an opaque encoded string (never the raw primary key);
@@ -721,24 +710,51 @@ the real system bones.
 
 | Bone | Why | Workaround / plan |
 |---|---|---|
-| `CaptchaBone` | request-time verification, **no storage** | belongs to the form/anti-abuse layer, not the model — v2 candidate on SQLList's form handling |
+| `CaptchaBone` | request-time verification, **no storage** | belongs to the form/anti-abuse layer, not the model |
 | `SpamBone` | honeypot field, request-time | same as CaptchaBone |
 | `RandomSliceBone` | query *behavior* (random sampling), not a field | in SQL simply: `def sqlFilter(self, stmt): return stmt.order_by(func.random())` |
 | `BaseBone` (`"hidden"`) | raw hidden storage | one alias away: `Hidden = t.Annotated[str, BoneType("hidden", replace=True)]` |
+
+## Emitted structure keys
+
+Every bone carries the same base keys, pinned against viur-core 3.9:
+
+`descr`, `type`, `required`, `params`, `visible`, `readonly`, `unique`,
+`languages`, `emptyvalue`, `indexed`, `clone_behavior`, `multiple` — plus
+`defaultvalue` where one exists, and the `sortindex` that
+`SkeletonInstance.structure()` adds.
+
+Per bone family, on top of those:
+
+| Family | Additional keys |
+|---|---|
+| `str` | `maxlength` (default 254), `minlength` |
+| `numeric` | `min` / `max` (int64 bounds), `precision`, `decimal` |
+| `date` | `date`, `time`, `naive` |
+| `select` | `values` as a `{value: label}` dict |
+
+`clone_behavior` defaults to `{"strategy": "copy_value"}` and is
+`{"strategy": "set_default"}` for the bones that regenerate on clone
+(`Uid`, `SortIndex`). `emptyvalue` is `""` for the string family and `None`
+otherwise; multiple bones carry `defaultvalue: []`. `emptyvalue` decides how a
+cleared form input is read (`""` clears bones whose emptyvalue is not `""`).
+
+The unit suite pins this with a golden file; the integration suite compares
+it against the real bones.
 
 ## Common bone parameters
 
 | Bone parameter | Field equivalent |
 |---|---|
-| `descr` | `ViURField(descr=…)` (default: title-cased field name) |
+| `descr` | `Field(descr=…)` (default: title-cased field name) |
 | `required` | derived from the type; override with `required=` |
 | `defaultValue` | plain `default=` / `default_factory=` |
-| `visible=False` | `ViURField(visible=False)` |
-| `readOnly=True` | `ViURField(readonly=True)` (forces `required: false`, like `BaseBone`) |
-| `params` | `ViURField(params={…})` |
-| `unique` | `ViURField(unique=True)` — enforced by SQL; structure emits `False` in v1 |
-| `indexed` | `ViURField(index=…)` (structure default `True`, like datastore) |
-| `languages` | `Language[X]` wrapper type + `ViURField(languages=…)` or `set_default_languages()` |
+| `visible=False` | `Field(visible=False)` |
+| `readOnly=True` | `Field(readonly=True)` (forces `required: false`, like `BaseBone`) |
+| `params` | `Field(params={…})` |
+| `unique` | `Field(unique=True)` — enforced by SQL; the structure emits `False` |
+| `indexed` | `Field(index=…)` (structure default `True`, like datastore) |
+| `languages` | `Language[X]` wrapper type + `Field(languages=…)` or `set_default_languages()` |
 | `multiple` constraints | `viur_relation_meta = {"rel": {"multiple": {"min": …, "max": …, "duplicates": …}}}` |
 | `using` relations | association object: derive the link table from `RelationLink`, its payload columns ARE the using-skel |
 

@@ -3,7 +3,7 @@ requires = ["setuptools >= 61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "viur-models"
+name = "spltz-viur-models"
 dynamic = ["version"]
 description = "SQLmodel definitions for ViUR applications."
 readme = "README.md"
@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "viur-core>=3.8,<4",
-    "viur-actions>=0.2",
+    "spltz-viur-actions>=0.4,<1.0",
     "sqlmodel>=0.0.39",
     "pydantic-extra-types>=2.10",
     "pycountry>=24.6",
@@ -33,18 +33,30 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+migrations = [
+    "alembic>=1.13",
+]
+bigquery = [
+    "sqlalchemy-bigquery>=1.11",
+]
 test = [
     "pytest~=8.0",
     "pytest-cov~=5.0",
     "coverage[toml]~=7.0",
-    "viur-light-mock>=0.1",
+    # [overlay] pulls the real viur-core: the suite runs in the mock's overlay
+    # mode, where viur-core's own Module/decorators/Skeleton are used and only
+    # the datastore is kept in memory. Stand-in mode lacks Module and force_ssl,
+    # which viur.models.sqllist imports.
+    "spltz-viur-light-mock[overlay]>=0.3,<1.0",
+    "alembic>=1.13",
 ]
 docs = [
     "mkdocs-material~=9.5",
     "mkdocstrings[python]~=0.26",
+    "mkdocs-static-i18n~=1.2",
 ]
 dev = [
-    "viur-models[test,docs]",
+    "spltz-viur-models[migrations,bigquery,test,docs]",
     "build~=1.2",
 ]
 

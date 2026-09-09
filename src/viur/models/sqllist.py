@@ -1,25 +1,5 @@
-"""``SQLList`` — the SQL counterpart of viur-core's ``List`` prototype.
-
-Serves a :class:`~viur.models.ViURModel` over the same endpoints
-(``list``/``view``/``add``/``edit``/``delete``/``structure``) and the same
-envelope-v2 API as a skeleton module (design: analysis/02). The hook system
-(``can<X>``/``on<X>``/``then<X>``/``<X>Skel``) comes unchanged from
-viur-actions; the suffix-less defaults on this class are **fail-closed** —
-a concrete module must open up access via ``can`` / ``can<X>`` overrides.
-
-This module imports viur-core and viur-actions — it is deliberately **not**
-re-exported from ``viur.models`` so that plain model definitions stay free
-of the framework import.
-
-    from viur.models.sqllist import SQLList
-    from models.feedback import Feedback
-
-    class feedback(SQLList):
-        model = Feedback
-
-        def can(self, instance):    # or per-action canView/canEdit/…
-            return True
-"""
+"""``SQLList`` — module prototype serving one ``Model`` over envelope v2 with the viur-actions
+hook chain (``can<X>``/``on<X>``/``then<X>``/``<X>Skel``); suffix-less defaults are fail-closed."""
 import base64
 import datetime
 import decimal
@@ -27,7 +7,7 @@ import json
 import typing as t
 
 from sqlalchemy import and_, false, nullslast, or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 from sqlmodel import select
 
 from viur.actions import ActionModule, action
@@ -35,22 +15,18 @@ from viur.actions.runtime import get_hook_method, get_resolved_hooks
 from viur.core import Module, current, errors
 from viur.core.decorators import exposed, force_post, force_ssl, skey
 
-from .base import ViURModel, _dump_value, _utcnow
+from .base import Model, _dump_value, _utcnow
 from .structure import MODULE_BY_MODEL
 from . import crossstore as _crossstore
-from .db import get_session
+from .db import get_engine, get_session
 
 DEFAULT_LIMIT = 30
 MAX_LIMIT = 100
+X_VIUR_BONELIST = "X-VIUR-BONELIST"
 
 
 def _encode_cursor(orderby: str | None, descending: bool, row: t.Any) -> str:
-    """Keyset cursor: the last row's sort-key values, bound to the order.
-
-    Opaque to clients; ``[sort value, id]`` (or ``[id]`` without orderby)
-    plus the order it belongs to — a cursor is only valid for the query
-    that produced it, like core's datastore cursors.
-    """
+    """Keyset cursor ``[sort value, id]`` bound to its order; opaque to clients."""
     values = [row.id]
     if orderby:
         values.insert(0, _dump_value(getattr(row, orderby)))
@@ -62,8 +38,7 @@ def _encode_cursor(orderby: str | None, descending: bool, row: t.Any) -> str:
 
 
 def _decode_cursor(cursor: t.Any) -> dict | None:
-    """Opaque cursor → keyset payload. Malformed cursors restart at the
-    beginning (no error leak)."""
+    """Cursor → keyset payload; malformed cursors restart at the beginning."""
     if not cursor:
         return None
     try:
@@ -77,8 +52,7 @@ def _decode_cursor(cursor: t.Any) -> dict | None:
 
 
 def _coerce_cursor_value(column: t.Any, value: t.Any) -> t.Any:
-    """JSON-roundtripped cursor values back into the column's python type
-    (datetimes travel as ISO strings, Decimals as floats)."""
+    """JSON-roundtripped cursor value → the column's python type."""
     if value is None:
         return None
     try:
@@ -105,25 +79,44 @@ def _clamp_limit(raw: t.Any) -> int:
 
 
 def _truthy(value: t.Any) -> bool:
-    """Truthy client strings, like core's ``utils.parse.bool``."""
+    """Truthy client strings (``utils.parse.bool``)."""
     return str(value).strip().lower() in ("true", "yes", "1")
 
 
 def _is_post_request() -> bool:
-    """Core parity: writes require a real POST. Outside a request context
-    (library/test use) there is nothing to gate — treated as POST."""
+    """``request.isPostRequest``; ``True`` outside a request context."""
     return bool(getattr(current.request.get(), "isPostRequest", True))
 
 
+def _client_bones(structure: dict, model_cls: type[Model]) -> frozenset | None:
+    """Bones requested via ``X-VIUR-BONELIST`` (core's client-defined subskel): the header's
+    names known to the structure, plus ``key`` and ``model_cls.viur_bones_always``. ``None``
+    without the header. Sets ``Vary`` like core."""
+    request = current.request.get()
+    headers = getattr(getattr(request, "request", None), "headers", None)
+    raw = headers.get(X_VIUR_BONELIST) if headers is not None else None
+    if not raw:
+        return None
+    names = {name.strip() for name in raw.split(",")} | {"key", *model_cls.viur_bones_always}
+    if (response := getattr(request, "response", None)) is not None:
+        response.vary = (X_VIUR_BONELIST, *(getattr(response, "vary", None) or ()))
+    return frozenset(name for name in names if name in structure)
+
+
 def _escape_like(value: str) -> str:
-    """Escape LIKE wildcards in client input (used with ``escape="\\\\"``)."""
+    """Backslash-escape LIKE wildcards (see ``_ilike``)."""
     return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
+def _ilike(column: t.Any, pattern: str) -> t.Any:
+    """Case-insensitive LIKE with backslash escaping; BigQuery's LIKE has no ``ESCAPE`` clause."""
+    if get_engine().dialect.name == "bigquery":
+        return column.ilike(pattern)
+    return column.ilike(pattern, escape="\\")
+
+
 def _coerce_numeric(value: t.Any) -> t.Any:
-    """Coerce a client filter string for a numeric column — backends like
-    Postgres reject string comparisons on numeric columns. Returns ``None``
-    for unusable values (the filter is then ignored, like core)."""
+    """Client filter string → number; ``None`` when unusable (the filter is ignored)."""
     if isinstance(value, (int, float)):
         return value
     try:
@@ -133,10 +126,8 @@ def _coerce_numeric(value: t.Any) -> t.Any:
         return None
 
 
-def _drop_structure_caches(cls: type = ViURModel) -> None:
-    """Drop every cached structure in the ViURModel tree — structures built
-    BEFORE a module registered its model would carry the kind fallback as
-    the relational ``module``; they rebuild lazily with the registry."""
+def _drop_structure_caches(cls: type = Model) -> None:
+    """Drop cached structures in the Model tree (they may carry the kind fallback as ``module``)."""
     for sub in cls.__subclasses__():
         if "_viur_structure" in sub.__dict__:
             del sub._viur_structure
@@ -144,12 +135,7 @@ def _drop_structure_caches(cls: type = ViURModel) -> None:
 
 
 class ModelList(list):
-    """A list of model instances + cursor/orders.
-
-    Satisfies the protocol ``render_list`` reads (``getCursor()`` /
-    ``get_orders()``), so the envelope carries pagination and sorting
-    exactly like a ``SkelList``.
-    """
+    """Instances plus ``getCursor()``/``get_orders()`` for ``render_list``."""
 
     def __init__(self, items: t.Iterable = (), *, cursor: str | None = None,
                  orders: t.Iterable = ()):
@@ -165,81 +151,111 @@ class ModelList(list):
 
 
 class SQLList(ActionModule, Module):
-    """Module prototype serving one ViURModel — see the module docstring."""
+    """Module prototype serving one ``Model``."""
 
-    #: Admin handler — clients treat an SQLList like any list module
-    #: (that is the parity promise; the wire format is identical).
     handler = "list"
 
-    #: Renderer opt-in — viur-core's ``__build_app`` only instantiates a
-    #: module for a renderer family when its class carries a truthy attribute
-    #: of that name (same mechanism as ``List.vi = True`` in core). SQLList
-    #: targets the JSON/vi envelope APIs; subclasses can opt out
-    #: (``json = False``) or add families (``html = True``).
+    #: Renderer families (``__build_app`` reads truthy class attributes).
     json = True
     vi = True
 
-    model: t.ClassVar[type[ViURModel] | None] = None
+    #: Envelope version; ``viur.actions.install()`` upgrades every mount carrying it.
+    json_version = 2
+
+    model: t.ClassVar[type[Model] | None] = None
 
     def __init__(self, moduleName: str, modulePath: str, *args: t.Any, **kwargs: t.Any):
         if type(self).model is None:
             raise NotImplementedError(
                 f"{type(self).__name__} must set the ``model`` class attribute "
-                "to the ViURModel it serves."
+                "to the Model it serves."
             )
         super().__init__(moduleName, modulePath, *args, **kwargs)
-        # Announce "this module serves that model" — relational bones
-        # referencing the model emit this name as their ``module`` (admin
-        # clients query it for selections). First module wins; structures
-        # cached before registration would still carry the kind fallback,
-        # so all cached structures are dropped and rebuild lazily.
+        # first mount wins; caches built before it carry the kind fallback
         if MODULE_BY_MODEL.setdefault(type(self).model, moduleName) == moduleName:
             _drop_structure_caches()
 
     # --- suffix-less default hooks (viur-actions fallback chain) -----------
 
-    def can(self, instance: ViURModel | None) -> bool:
-        """Fail-closed default — override ``can`` / ``can<X>`` to open up."""
+    def can(self, instance: Model | None) -> bool:
+        """Fail-closed default."""
         return False
 
-    def on(self, instance: ViURModel) -> None:
-        """Pre-commit hook default (no-op)."""
+    def on(self, instance: Model) -> None:
+        """Pre-commit hook default."""
 
-    def then(self, instance: ViURModel) -> None:
-        """Post-commit hook default (no-op)."""
+    def then(self, instance: Model) -> None:
+        """Post-commit hook default."""
 
-    def skel(self, *args: t.Any, **kwargs: t.Any) -> type[ViURModel]:
-        """Model factory slot — ``<x>Skel`` overrides may narrow the model."""
+    def skel(self, *args: t.Any, **kwargs: t.Any) -> type[Model]:
+        """Model factory slot (``<x>Skel`` may narrow the model)."""
         return type(self).model
 
     def sqlFilter(self, stmt: t.Any) -> t.Any:
-        """``listFilter`` analogue — restrict the list statement (tenant
-        filters, soft-delete, …). Default: unchanged."""
+        """``listFilter`` analogue."""
         return stmt
 
     # --- helpers ------------------------------------------------------------
 
-    def _check(self, hooks: t.Any, instance: ViURModel | None) -> None:
+    def _require_v2_render(self) -> None:
+        """``NotAcceptable`` unless the render reports ``version >= 2`` (duck-typed)."""
+        if getattr(getattr(self, "render", None), "version", 0) < 2:
+            raise errors.NotAcceptable(
+                f"module {self.moduleName!r} serves envelope v2 only, but its "
+                "render is not v2-capable. Call viur.actions.install() at app "
+                "boot — SQLList's json_version = 2 pin upgrades every mount "
+                "from there."
+            )
+
+    def _check(self, hooks: t.Any, instance: Model | None) -> None:
         if not get_hook_method(self, hooks, "can")(instance):
             raise errors.Forbidden()
 
-    def _with_relations(self, stmt: t.Any, model_cls: type[ViURModel]) -> t.Any:
-        """Eager-load all relations — dumps run after the session closed,
-        where lazy loading would fail on detached instances. Association
-        links chain-load their dest side."""
+    def _with_relations(
+        self, stmt: t.Any, model_cls: type[Model], only: frozenset | None = None,
+    ) -> t.Any:
+        """Eager-load relations (dumps run detached); ``only`` limits them to the requested
+        bones. Association links chain-load ``dest``."""
         for rel_name, info in model_cls.viur_relations().items():
+            if only is not None and rel_name not in only:
+                continue
             loader = selectinload(getattr(model_cls, rel_name))
             if info.get("link"):
                 loader = loader.selectinload(getattr(info["link"], info["dest_rel"]))
             stmt = stmt.options(loader)
         return stmt
 
-    def _load(self, model_cls: type[ViURModel], session: t.Any, key: t.Any) -> ViURModel:
+    def _restrict(
+        self, stmt: t.Any, model_cls: type[Model], bones: frozenset | None,
+        extra: t.Iterable[str] = (),
+    ) -> t.Any:
+        """Fetch only what a client bonelist needs — core unserializes a bone on access, here
+        it is not even read: ``load_only`` on the requested columns (plus ``extra``, e.g. the
+        sort column the cursor reads), ``selectinload`` on the requested relations. A computed
+        bone reads arbitrary columns, so any of them keeps the full row. ``None``: full load."""
+        if bones is None:
+            return self._with_relations(stmt, model_cls)
+        relations = model_cls.viur_relations()
+        if not bones & set(model_cls.model_computed_fields):
+            names = {"id"}
+            for name in (*bones, *extra):
+                if name in relations:
+                    if (fk := relations[name]["fk"]) is not None:
+                        names.add(fk)
+                elif name in model_cls.model_fields:
+                    names.add(name)
+            stmt = stmt.options(load_only(*(getattr(model_cls, name) for name in names)))
+        return self._with_relations(stmt, model_cls, only=bones)
+
+    def _load(
+        self, model_cls: type[Model], session: t.Any, key: t.Any,
+        bones: frozenset | None = None,
+    ) -> Model:
         primary_key = model_cls.viur_parse_key(str(key))
         if primary_key is None:
             raise errors.NotFound()
-        stmt = self._with_relations(
-            select(model_cls).where(model_cls.id == primary_key), model_cls,
+        stmt = self._restrict(
+            select(model_cls).where(model_cls.id == primary_key), model_cls, bones,
         )
         instance = session.exec(stmt).one_or_none()
         if instance is None:
@@ -247,20 +263,17 @@ class SQLList(ActionModule, Module):
         return instance
 
     def _verify_relations(
-        self, model_cls: type[ViURModel], instance: ViURModel, session: t.Any,
+        self, model_cls: type[Model], instance: Model, session: t.Any,
     ) -> list:
-        """Existence check for relational input — ``viur_from_client`` only
-        validates the key *format*; whether the target rows exist needs the
-        session and is checked here, before anything is committed."""
+        """Existence check of relational input (``viur_from_client`` validates the key format only)."""
         from .client import relation_error
 
         pending = instance.__dict__.get("_viur_pending_relations", {})
         errs = []
         for rel_name, info in model_cls.viur_relations().items():
             if info.get("crossstore"):
-                continue  # datastore read in viur_from_client was the check
+                continue  # checked by read_dest
             if info.get("link"):
-                # association rows: verify their dest FK targets exist
                 if any(
                     session.get(info["target"], getattr(link, info["dest_fk"])) is None
                     for link in pending.get(rel_name, ())
@@ -279,15 +292,13 @@ class SQLList(ActionModule, Module):
 
     def _assign_pending_relations(
         self,
-        model_cls: type[ViURModel],
-        instance: ViURModel,
-        source: ViURModel,
+        model_cls: type[Model],
+        instance: Model,
+        source: Model,
         session: t.Any,
     ) -> None:
-        """Resolve parked many-to-many key lists (``viur_from_client``) into
-        target instances and assign them — SQLAlchemy syncs the link table
-        on commit. ``source`` carries the pending map (the validated
-        instance on edit, the new instance itself on add)."""
+        """Resolve parked many-to-many keys into instances and assign them; ``source`` carries
+        the pending map (the validated instance on edit, the instance itself on add)."""
         pending = source.__dict__.get("_viur_pending_relations")
         if not pending:
             return
@@ -295,9 +306,7 @@ class SQLList(ActionModule, Module):
         for rel_name, primary_keys in pending.items():
             info = relations[rel_name]
             if info.get("crossstore") or info.get("link"):
-                # ready link rows (validated in viur_from_client); the
-                # parent FK is populated through the relationship on flush.
-                targets = list(primary_keys)
+                targets = list(primary_keys)  # ready link rows; parent FK set on flush
             else:
                 targets = [
                     session.get(info["target"], primary_key)
@@ -310,22 +319,21 @@ class SQLList(ActionModule, Module):
     @action
     @exposed
     def list(self, **kwargs: t.Any) -> t.Any:
+        self._require_v2_render()
         hooks = get_resolved_hooks(self, "list")
         self._check(hooks, None)
         model_cls = get_hook_method(self, hooks, "skel")()
-        structure = model_cls.viur_structure()
+        structure = model_cls._viur_structure_shared()  # read-only hot path
+        bones = _client_bones(structure, model_cls)
 
         limit = _clamp_limit(kwargs.pop("limit", DEFAULT_LIMIT))
         cursor_payload = _decode_cursor(kwargs.pop("cursor", None))
         orderby = kwargs.pop("orderby", None)
         descending = str(kwargs.pop("orderdir", "0")).lower() in ("1", "desc", "descending")
 
-        stmt = self._with_relations(select(model_cls), model_cls)
+        stmt = select(model_cls)
 
-        # Fulltext search — the SQL take on core's ``search`` parameter:
-        # OR-LIKE over the string-family fields (write-only and language
-        # fields excluded). Without any searchable field the query is
-        # unsatisfiable, exactly like core without a fulltext adapter.
+        # search: OR-LIKE over string-family fields; nothing searchable → unsatisfiable
         write_only = model_cls.viur_write_only()
         if (term := kwargs.pop("search", None)) not in (None, ""):
             searchable = [
@@ -338,19 +346,15 @@ class SQLList(ActionModule, Module):
             if searchable:
                 pattern = f"%{_escape_like(str(term))}%"
                 stmt = stmt.where(or_(*[
-                    column.ilike(pattern, escape="\\") for column in searchable
+                    _ilike(column, pattern) for column in searchable
                 ]))
             else:
                 stmt = stmt.where(false())
 
-        # Filters — core's query language: ``field=value`` (equality, lists
-        # become IN), plus the operator suffixes ``$lt``/``$le``/``$gt``/
-        # ``$ge`` and ``$lk`` (case-insensitive prefix match, like
-        # StringBone). Only structure-known, writable scalar fields filter;
-        # the column lookup goes through the model class, so unknown
-        # parameters are ignored (core behavior) and nothing is
-        # string-interpolated.
-        unfilterable = (
+        # filters: field=value (lists → IN), $lt/$le/$gt/$ge/$lk on structure-known
+        # writable scalars. Relations, cross-store refs and write-only bones have no
+        # usable SQL expression — gates filters AND orderby.
+        unqueryable = (
             write_only
             | set(model_cls.viur_relations())
             | set(model_cls.viur_crossstore())
@@ -358,15 +362,15 @@ class SQLList(ActionModule, Module):
         for raw_key, value in kwargs.items():
             name, _, operator = raw_key.partition("$")
             if name not in structure or structure[name]["readonly"] \
-                    or name in unfilterable or not hasattr(model_cls, name):
+                    or name in unqueryable or not hasattr(model_cls, name):
                 continue
             if operator and isinstance(value, (list, tuple)):
-                continue  # operators take scalars only (core behavior)
+                continue  # operators take scalars
             if structure[name]["type"].startswith("numeric"):
                 if isinstance(value, (list, tuple)):
                     value = [v for v in map(_coerce_numeric, value) if v is not None]
                 elif (value := _coerce_numeric(value)) is None:
-                    continue  # unusable numeric filter → ignored
+                    continue
             column = getattr(model_cls, name)
             if operator == "lt":
                 stmt = stmt.where(column < value)
@@ -378,25 +382,21 @@ class SQLList(ActionModule, Module):
                 stmt = stmt.where(column >= value)
             elif operator == "lk":
                 stmt = stmt.where(
-                    column.ilike(f"{_escape_like(str(value))}%", escape="\\"),
+                    _ilike(column, f"{_escape_like(str(value))}%"),
                 )
-            elif operator:  # unknown suffix falls back to equality, like core
+            elif operator:  # unknown suffix: equality
                 stmt = stmt.where(column == value)
             elif isinstance(value, (list, tuple)):
                 stmt = stmt.where(column.in_(value))
             else:
                 stmt = stmt.where(column == value)
 
-        # Ordering + keyset pagination. The result always has a total order
-        # (``id`` is the tiebreaker; NULLS LAST on the sort column, so the
-        # placement is backend-independent) — the cursor then encodes the
-        # last row's sort-key values and the next page SEEKS past them
-        # instead of counting an OFFSET: stable under concurrent inserts/
-        # deletes and O(1) regardless of page depth.
+        # total order (sort column NULLS LAST, id tiebreaker); the cursor seeks past
+        # the last row instead of an OFFSET
         orders = []
         sort_column = None
         if orderby and orderby in structure and not structure[orderby]["readonly"] \
-                and hasattr(model_cls, orderby):
+                and orderby not in unqueryable and hasattr(model_cls, orderby):
             sort_column = getattr(model_cls, orderby)
             stmt = stmt.order_by(
                 nullslast(sort_column.desc() if descending else sort_column.asc()),
@@ -407,8 +407,7 @@ class SQLList(ActionModule, Module):
             orderby = None
             stmt = stmt.order_by(model_cls.id.asc())
 
-        # A cursor is only valid for the order that produced it — on a
-        # mismatch (or garbage) the listing restarts from the beginning.
+        # a cursor is only valid for its order
         if cursor_payload is not None and (
             cursor_payload.get("o") != orderby
             or cursor_payload.get("d") != ("desc" if descending else "asc")
@@ -434,25 +433,31 @@ class SQLList(ActionModule, Module):
                     sort_column.is_(None),  # NULLS LAST: the tail comes after
                 ))
 
+        stmt = self._restrict(stmt, model_cls, bones, extra=(orderby,) if orderby else ())
         stmt = self.sqlFilter(stmt).limit(limit + 1)
         with get_session() as session:
             rows = list(session.exec(stmt).all())
 
-        # limit+1 fetch decides whether a next page exists; the cursor is
-        # derived from the LAST returned row's sort keys.
         has_more = len(rows) > limit
         rows = rows[:limit]
         cursor = _encode_cursor(orderby, descending, rows[-1]) if has_more else None
+        if bones:
+            for row in rows:
+                row.__dict__["_viur_bones"] = bones
         return self.render.list(ModelList(rows, cursor=cursor, orders=orders))
 
     @action
     @exposed
     def view(self, key: str, **kwargs: t.Any) -> t.Any:
+        self._require_v2_render()
         hooks = get_resolved_hooks(self, "view")
         model_cls = get_hook_method(self, hooks, "skel")()
+        bones = _client_bones(model_cls._viur_structure_shared(), model_cls)
         with get_session() as session:
-            instance = self._load(model_cls, session, key)
-        self._check(hooks, instance)
+            instance = self._load(model_cls, session, key, bones)
+            self._check(hooks, instance)  # inside the session, like edit/delete
+        if bones:
+            instance.__dict__["_viur_bones"] = bones
         return self.render.view(instance)
 
     @action
@@ -460,21 +465,18 @@ class SQLList(ActionModule, Module):
     @exposed
     @skey(allow_empty=True)
     def add(self, **kwargs: t.Any) -> t.Any:
+        self._require_v2_render()
         hooks = get_resolved_hooks(self, "add")
         self._check(hooks, None)
         model_cls = get_hook_method(self, hooks, "skel")()
         kwargs.pop("skey", None)
-        # core-List parity: ``bounce`` requests a validated re-render
-        # (review before saving) and never writes; vi/admin4 opens the add
-        # form this way (POST with skey + bounce=true).
-        bounce = _truthy(kwargs.pop("bounce", None))
+        bounce = _truthy(kwargs.pop("bounce", None))  # validated re-render, never writes
 
         if not kwargs:  # fresh form
             return self.render.add(model_cls())
 
         instance, client_errors = model_cls.viur_from_client(kwargs)
-        if client_errors:
-            # rejected re-render — the form carries the submitted values
+        if client_errors:  # rejected re-render
             instance.errors = client_errors
             return self.render.add(instance)
 
@@ -483,15 +485,13 @@ class SQLList(ActionModule, Module):
                 instance.errors = relation_errors
                 return self.render.add(instance)  # unknown relation target
             if bounce or not _is_post_request():
-                # validated preview — nothing is saved (core-List parity:
-                # writes happen only on a real POST submit without bounce)
-                return self.render.add(instance)
+                return self.render.add(instance)  # validated preview
             self._assign_pending_relations(model_cls, instance, instance, session)
-            get_hook_method(self, hooks, "on")(instance)      # onAdd — before commit
+            get_hook_method(self, hooks, "on")(instance)  # onAdd
             session.add(instance)
-            session.flush()                     # assigns the id …
-            _crossstore.sync_index(instance, session)  # … for the relations index
-        get_hook_method(self, hooks, "then")(instance)        # thenAdd — after commit
+            session.flush()
+            _crossstore.sync_index(instance, session)
+        get_hook_method(self, hooks, "then")(instance)  # thenAdd
         return self.render.addSuccess(instance)
 
     @action
@@ -499,21 +499,18 @@ class SQLList(ActionModule, Module):
     @exposed
     @skey(allow_empty=True)
     def edit(self, key: str, **kwargs: t.Any) -> t.Any:
+        self._require_v2_render()
         hooks = get_resolved_hooks(self, "edit")
         model_cls = get_hook_method(self, hooks, "skel")()
         kwargs.pop("skey", None)
-        # ``bounce`` = validated re-render, never writes (core-List parity)
         bounce = _truthy(kwargs.pop("bounce", None))
-        structure = model_cls.viur_structure()
+        structure = model_cls._viur_structure_shared()  # read-only hot path
         relations = model_cls.viur_relations()
         editable = [
             name for name, bone in structure.items()
             if name != "key" and not bone["readonly"]
         ]
-        # To-one relations are merged via their bone name but assigned via
-        # their FK column — assigning the relationship attribute itself
-        # (always unset on the validated instance) would null the relation.
-        # Many-to-many relations are assigned from the pending map instead.
+        # to-one relations are assigned via their FK column, many-to-many from the pending map
         assignable = [name for name in editable if name not in relations]
         assignable += [
             info["fk"] for name, info in relations.items()
@@ -527,14 +524,8 @@ class SQLList(ActionModule, Module):
             if not kwargs:  # fresh form
                 return self.render.edit(instance)
 
-            # Merge, not replace: unsubmitted fields keep their stored value —
-            # like ``skel.fromClient`` on a loaded skeleton instance.
-            # Write-only bones are excluded: their dump is the masked
-            # emptyvalue, feeding it back would blank the stored secret.
-            # Multiple bones are excluded too — browsers submit NOTHING for
-            # an empty multi-selection, so absent means "empty", not "keep
-            # stored" (the form always posts its full state); unsubmitted
-            # multiples therefore clear.
+            # merge over the stored dump; write-only excluded (masked dump), multiples
+            # cleared (browsers post nothing for an empty selection)
             write_only = model_cls.viur_write_only()
             multiple = {
                 name for name in editable if structure[name].get("multiple")
@@ -549,9 +540,7 @@ class SQLList(ActionModule, Module):
                 | kwargs
             )
             validated, client_errors = model_cls.viur_from_client(merged)
-            if client_errors:
-                # rejected re-render — show the submitted (merged) values,
-                # keyed like the stored row; the row itself stays untouched
+            if client_errors:  # rejected re-render, keyed like the stored row
                 validated.id = instance.id
                 validated.errors = client_errors
                 return self.render.edit(validated)
@@ -561,9 +550,7 @@ class SQLList(ActionModule, Module):
                 validated.errors = relation_errors
                 return self.render.edit(validated)  # unknown relation target
 
-            if bounce or not _is_post_request():
-                # validated preview of the merged values — the stored row is
-                # untouched (``validated`` is transient, never in the session)
+            if bounce or not _is_post_request():  # validated preview; validated is transient
                 validated.id = instance.id
                 return self.render.edit(validated)
 
@@ -571,18 +558,15 @@ class SQLList(ActionModule, Module):
                 if name in write_only and getattr(validated, name) in (None, ""):
                     continue  # empty write-only input keeps the stored value
                 setattr(instance, name, getattr(validated, name))
-            # Drop stale loaded to-one relations — an FK may have changed;
-            # the dump then falls back to the key-only dest from the new FK.
-            # Many-to-many collections are assigned below, not expired —
-            # expiring them would discard the pending change.
+            # expire loaded to-one relations (an FK may have changed); many-to-many are assigned below
             if single := [n for n, i in relations.items() if not i["multiple"]]:
                 session.expire(instance, single)
             self._assign_pending_relations(model_cls, instance, validated, session)
             _crossstore.sync_index(instance, session)
             instance.changedate = _utcnow()
-            get_hook_method(self, hooks, "on")(instance)      # onEdit — before commit
+            get_hook_method(self, hooks, "on")(instance)  # onEdit
 
-        get_hook_method(self, hooks, "then")(instance)        # thenEdit — after commit
+        get_hook_method(self, hooks, "then")(instance)  # thenEdit
         return self.render.editSuccess(instance)
 
     @action
@@ -591,21 +575,22 @@ class SQLList(ActionModule, Module):
     @exposed
     @skey
     def delete(self, key: str, **kwargs: t.Any) -> t.Any:
+        self._require_v2_render()
         hooks = get_resolved_hooks(self, "delete")
         model_cls = get_hook_method(self, hooks, "skel")()
         with get_session() as session:
             instance = self._load(model_cls, session, key)
             self._check(hooks, instance)
-            get_hook_method(self, hooks, "on")(instance)      # onDelete — before commit
+            get_hook_method(self, hooks, "on")(instance)  # onDelete
             _crossstore.drop_index(instance, session)
             session.delete(instance)
-        get_hook_method(self, hooks, "then")(instance)        # thenDelete — after commit
+        get_hook_method(self, hooks, "then")(instance)  # thenDelete
         return self.render.deleteSuccess(instance)
 
     @exposed
     def structure(self, action: str = "view") -> t.Any:
-        """Structure of the served model, per action — mirrors core's
-        ``List.structure`` (``<action>Skel`` + ``can<action>`` gate)."""
+        """Structure per action (``<action>Skel`` + ``can<action>``), like ``List.structure``."""
+        self._require_v2_render()
         try:
             hooks = get_resolved_hooks(self, action)
         except KeyError:

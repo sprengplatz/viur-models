@@ -1,24 +1,4 @@
-"""Session lifecycle — one shared engine, one session per action call.
-
-Configured **once** at app boot (next to ``viur.actions.install()``):
-
-    import viur.models.db
-    viur.models.db.configure("postgresql+pg8000://…")
-
-On App Engine Standard the default pool class is ``NullPool`` — instances
-scale to zero, a persistent pool would leak connections. Cloud SQL is wired
-through the ``cloud-sql-python-connector`` via the ``creator=`` kwarg:
-
-    from google.cloud.sql.connector import Connector
-    connector = Connector()
-    viur.models.db.configure(
-        "postgresql+pg8000://",
-        creator=lambda: connector.connect("project:region:instance", "pg8000", …),
-    )
-
-There is deliberately **no** implicit fallback engine: using
-:func:`get_session` before :func:`configure` fails fast with instructions.
-"""
+"""Shared engine, one session per action, ``RecordJSON`` column type."""
 import typing as t
 from contextlib import contextmanager
 
@@ -34,18 +14,20 @@ _engine: "Engine | None" = None
 
 
 def configure(engine_or_url: "Engine | str", **create_engine_kwargs: t.Any) -> "Engine":
-    """Set the shared engine. Call once at app boot.
-
-    Accepts a database URL (an engine is created, ``poolclass`` defaults to
-    ``NullPool`` for App Engine) or a ready-made engine (used as-is — tests
-    pass their SQLite engine here).
-    """
+    """Set the shared engine from a URL (``NullPool`` default) or a ready engine. Once, at boot."""
     global _engine
     if isinstance(engine_or_url, str):
         create_engine_kwargs.setdefault("poolclass", NullPool)
         _engine = create_engine(engine_or_url, **create_engine_kwargs)
     else:
         _engine = engine_or_url
+    if _engine.dialect.name == "bigquery":
+        import logging
+
+        from .bigquery import apply_engine_workarounds
+
+        for note in apply_engine_workarounds(_engine):
+            logging.getLogger(__name__).warning("viur-models[bigquery]: %s", note)
     return _engine
 
 
@@ -60,7 +42,7 @@ def get_engine() -> "Engine":
 
 
 def reset() -> None:
-    """Dispose and drop the configured engine (test isolation)."""
+    """Dispose and drop the engine (test isolation)."""
     global _engine
     if _engine is not None:
         _engine.dispose()
@@ -69,11 +51,7 @@ def reset() -> None:
 
 @contextmanager
 def get_session() -> t.Iterator[Session]:
-    """One session per action call: commit on success, rollback on error.
-
-    ``expire_on_commit=False`` keeps instances readable after the session
-    closes — the render serializes them outside the ``with`` block.
-    """
+    """Commit on success, rollback on error. ``expire_on_commit=False`` — instances stay readable after close."""
     session = Session(get_engine(), expire_on_commit=False)
     try:
         yield session
@@ -86,13 +64,7 @@ def get_session() -> t.Iterator[Session]:
 
 
 class RecordJSON(TypeDecorator):
-    """JSON column for nested record models — the storage glue for plain
-    pydantic nesting: model instances serialize to JSON dicts on write and
-    validate back into the record class on read (lists for multiple)::
-
-        address: Address | None = ViURField(default=None, sa_type=RecordJSON(Address))
-        stops: list[Address] = ViURField(default_factory=list, sa_type=RecordJSON(Address))
-    """
+    """JSON column for nested records: ``record_cls`` instances (or lists) dump on write, validate on read."""
 
     impl = JSON
     cache_ok = True
@@ -120,32 +92,75 @@ class RecordJSON(TypeDecorator):
         return value.model_dump(mode="json") if isinstance(value, SQLModel) else value
 
 
+ALEMBIC_VERSION_TABLE = "alembic_version"
+
+
+def schema_revision(engine: "Engine | None" = None) -> str | None:
+    """Stamped Alembic revision via plain SQL; ``None`` without an ``alembic_version`` table."""
+    from sqlalchemy import inspect, text
+
+    engine = engine or get_engine()
+    with engine.connect() as connection:
+        if not inspect(connection).has_table(ALEMBIC_VERSION_TABLE):
+            return None
+        row = connection.execute(
+            text(f"SELECT version_num FROM {ALEMBIC_VERSION_TABLE}"),  # noqa: S608
+        ).first()
+    return row[0] if row else None
+
+
+def url_from_preset(
+    engine: str | None, *, sqlite_file: str = "viur_models.sqlite3",
+    postgres_dsn: str = "", bigquery_dsn: str = "",
+) -> str:
+    """Database URL for a ``conf.models`` preset."""
+    if engine == "memory":
+        return "sqlite://"
+    if engine == "sqlite":
+        return f"sqlite:///{sqlite_file}"
+    if engine == "postgres":
+        if not postgres_dsn:
+            raise RuntimeError(
+                'engine "postgres" needs a DSN (conf.models.postgres_dsn, '
+                'e.g. "postgresql+pg8000://user:pw@host:5432/db")'
+            )
+        return postgres_dsn
+    if engine == "bigquery":
+        if not bigquery_dsn:
+            raise RuntimeError(
+                'engine "bigquery" needs a DSN (conf.models.bigquery_dsn, '
+                'e.g. "bigquery://my-project/my_dataset") — see '
+                "viur.models.bigquery for the backend's compromises"
+            )
+        return bigquery_dsn
+    raise RuntimeError(
+        'engine must be "memory", "sqlite", "postgres" or "bigquery" '
+        f"(got {engine!r}) — set conf.models.engine before building the engine"
+    )
+
+
+def url_from_conf() -> str:
+    """The database URL of the current ``conf.models`` preset."""
+    from .config import install_config
+
+    cfg = install_config()
+    return url_from_preset(
+        cfg.engine, sqlite_file=cfg.sqlite_file, postgres_dsn=cfg.postgres_dsn,
+        bigquery_dsn=getattr(cfg, "bigquery_dsn", ""),
+    )
+
+
 def configure_from_conf() -> "Engine":
-    """Build the shared engine from the ``conf.models`` preset — see
-    :mod:`viur.models.config` for the three presets (``memory`` /
-    ``sqlite`` / ``postgres``) and their settings."""
+    """Build the shared engine from the ``conf.models`` preset."""
     from sqlalchemy.pool import StaticPool
 
     from .config import install_config
 
     cfg = install_config()
     options = dict(cfg.engine_options)
+    url = url_from_conf()
 
     if cfg.engine == "memory":
-        # one shared connection, so every session sees the same database
-        options.setdefault("poolclass", StaticPool)
+        options.setdefault("poolclass", StaticPool)  # one connection = one database
         options.setdefault("connect_args", {"check_same_thread": False})
-        return configure("sqlite://", **options)
-    if cfg.engine == "sqlite":
-        return configure(f"sqlite:///{cfg.sqlite_file}", **options)
-    if cfg.engine == "postgres":
-        if not cfg.postgres_dsn:
-            raise RuntimeError(
-                'conf.models.engine = "postgres" needs conf.models.postgres_dsn '
-                '(e.g. "postgresql+pg8000://user:pw@host:5432/db")'
-            )
-        return configure(cfg.postgres_dsn, **options)
-    raise RuntimeError(
-        'conf.models.engine must be "memory", "sqlite" or "postgres" '
-        f"(got {cfg.engine!r}) — set it before viur.models.db.configure_from_conf()"
-    )
+    return configure(url, **options)

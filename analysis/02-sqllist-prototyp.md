@@ -1,9 +1,9 @@
 # SQLList-Prototyp
 
-**Status:** Umgesetzt inkl. Query-Sprache/`search` (`viur.models.sqllist` + `viur.models.db`; §1-Befund 2 wurde direkt in viur-actions gefixt — das v2-Gate ist jetzt protokollbasiert) · **Bezug:** viur-core 3.9.0.dev6, viur-actions 0.2 (Envelope v2, `@action`/`ActionModule`), SQLModel ≥ 0.0.39, [01 — ViURField & Structure-Mapping](01-viurfield-und-structure-mapping.md)
+**Status:** Umgesetzt inkl. Query-Sprache/`search` (`viur.models.sqllist` + `viur.models.db`; §1-Befund 2 wurde direkt in viur-actions gefixt — das v2-Gate ist jetzt protokollbasiert) · **Bezug:** viur-core 3.9.0.dev6, viur-actions 0.2 (Envelope v2, `@action`/`ActionModule`), SQLModel ≥ 0.0.39, [01 — Field & Structure-Mapping](01-viurfield-und-structure-mapping.md)
 
 `SQLList` ist das SQL-Gegenstück zum viur-core-`List`-Prototyp: ein
-Modul-Prototyp, der ein `ViURModel` über dieselben Endpunkte
+Modul-Prototyp, der ein `Model` über dieselben Endpunkte
 (`list`/`view`/`add`/`edit`/`delete`/`structure`) und dieselbe
 Envelope-v2-API serviert wie ein Skeleton-Modul. Die Modell-Schicht
 (Dokument 01) liefert dafür bereits `structure()`/`dump()`/`viur_from_client()`
@@ -17,7 +17,7 @@ Gegen den echten Code geprüft:
 
 1. **v1-`DefaultRender.renderEntry` ist isinstance-gegated:**
    `isinstance(skel, SkeletonInstance)` — sonst Deprecation-Fallback ohne
-   `structure`/`errors`. Ein ViURModel wird dort **nicht** korrekt
+   `structure`/`errors`. Ein Model wird dort **nicht** korrekt
    gerendert.
 2. **Die v2-Envelope-Builder sind protokollbasiert:**
    `render_entity`/`render_list` (viur-actions) greifen per `hasattr` auf
@@ -52,7 +52,7 @@ als Core-Change-Kandidat notiert).
 class SQLList(ActionModule, Module):
     """SQL-Gegenstück zum List-Prototyp. Konkrete Module setzen ``model``."""
 
-    model: type[ViURModel]            # das servierte Model (Pflicht)
+    model: type[Model]            # das servierte Model (Pflicht)
 
     kindName: str                     # default: model._viur_kind()
 ```
@@ -82,7 +82,7 @@ Action `can`/`on`/`then`/`skel`. Semantik in SQLList:
 - **`then<X>(instance)`** — nach dem Commit.
 - **`<x>Skel()`** — Factory-Slot; Default liefert `cls.model`. Overrides
   pro Action (`editSkel` → eingeschränktes Model) sind möglich, müssen
-  aber ein ViURModel (Klasse) liefern. Der Slot-Name bleibt `Skel` —
+  aber ein Model (Klasse) liefern. Der Slot-Name bleibt `Skel` —
   bewusst, damit die viur-actions-Maschinerie unverändert bleibt.
 
 ### 3.2 Ablauf pro Action (Soll)
@@ -199,7 +199,7 @@ class feedback(SQLList):
 
 | Feature | Pfad |
 |---|---|
-| v1-JSON-Render (`/json/` DefaultRender) | Core-Change: Protokoll- statt isinstance-Check in `renderEntry` |
+| ~~v1-JSON-Render~~ | **per Design ausgeschlossen (nicht mehr offen):** v2 ist Pflicht — der `json_version = 2`-Pin liegt auf dem Prototyp, und ohne v2-Render antwortet jede Action 406 (`_require_v2_render`) statt still falsch zu serialisieren |
 | `preview`, `clone`, `index` | nach Bedarf |
 | Relationen laden/expandieren | folgt dem Relational-Mapping (01 §5.4) |
 | HTML-Render | Jinja-Kontext braucht das Skeleton-Interface vollständig; nach dem Relational-Mapping |

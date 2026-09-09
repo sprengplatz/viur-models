@@ -6,7 +6,7 @@ directory, so this resolves under the default ``/skeletons/`` entry).
 
 ``ParityRefSkel`` is the skeleton twin of ``ParityModel`` in
 ``test_structure_parity.py`` — same fields, defined once as bones and once
-as a ViURModel. The parity test asserts both emit the same structure.
+as a Model. The parity test asserts both emit the same structure.
 """
 from viur.core.bones import (
     BooleanBone,

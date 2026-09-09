@@ -11,7 +11,7 @@ from skeletons import UsingRefSkel
 
 from sqlmodel import Field, Relationship
 
-from viur.models import RelationLink, ViURField, ViURModel
+from viur.models import RelationLink, Field, Model
 
 from test_relation_parity import RelTarget
 
@@ -25,10 +25,10 @@ class CrewLink(RelationLink, table=True):
         default=None, foreign_key="viur_models_test_parity.id", primary_key=True,
     )
     target: RelTarget = Relationship()
-    weight: int | None = ViURField(default=None, ge=0, le=10, descr="Gewichtung")
+    weight: int | None = Field(default=None, ge=0, le=10, descr="Gewichtung")
 
 
-class UsingParityModel(ViURModel, table=True):
+class UsingParityModel(Model, table=True):
     __tablename__ = "viur_models_test_usingcrew"
 
     viur_relation_meta = {"crew": {"descr": "Crew"}}

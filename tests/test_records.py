@@ -9,24 +9,24 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, create_engine, select
 
-from viur.models import RecordJSON, ViURField, ViURModel, ViURRecord, db
+from viur.models import RecordJSON, Field, Model, Record, db
 from viur.models.sqllist import SQLList
 
 from tests.test_sqllist import RecordingRender
 
 
-class Address(ViURRecord):  # the RelSkel analogue — no system fields
-    street: str = ViURField(descr="Straße", max_length=100)
-    zip_code: int | None = ViURField(default=None, descr="PLZ")
+class Address(Record):  # the RelSkel analogue — no system fields
+    street: str = Field(descr="Straße", max_length=100)
+    zip_code: int | None = Field(default=None, descr="PLZ")
 
 
-class Delivery(ViURModel, table=True):
+class Delivery(Model, table=True):
     __tablename__ = "viur_models_test_delivery"
-    name: str = ViURField(default="", required=False)
-    address: Address | None = ViURField(
+    name: str = Field(default="", required=False)
+    address: Address | None = Field(
         default=None, sa_type=RecordJSON(Address), descr="Adresse", format="$(street)",
     )
-    stops: list[Address] = ViURField(
+    stops: list[Address] = Field(
         default_factory=list, sa_type=RecordJSON(Address), required=False, descr="Stationen",
     )
 
@@ -75,8 +75,8 @@ def test_table_models_are_not_records():
     from tests.test_relations import Post  # a table model
 
     with pytest.raises(TypeError, match="Relationship"):
-        class Broken(ViURModel):
-            post: Post | None = ViURField(default=None)
+        class Broken(Model):
+            post: Post | None = Field(default=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -165,25 +165,36 @@ def test_from_client_accepts_dotted_record_input():
     assert (instance.address.street, instance.address.zip_code) == ("Hauptweg 1", 12345)
 
 
+def test_partial_dotted_record_keeps_the_other_fields():
+    # same merge rule as the language bones: an edit posting only
+    # ``address.street`` must not blank the stored zip_code.
+    stored = {"address": {"street": "Hauptweg 1", "zip_code": 12345}}
+    instance, errors = Delivery.viur_from_client(stored | {"address.street": "Nebenweg 2"})
+    assert errors == []
+    assert (instance.address.street, instance.address.zip_code) == ("Nebenweg 2", 12345)
+
+
 def test_plain_sqlmodel_still_works_as_record():
     class Plain(SQLModel):
-        note: str = ViURField(default="", required=False)
+        note: str = Field(default="", required=False)
 
-    class Wrapper(ViURModel):
-        extra: Plain | None = ViURField(default=None)
+    class Wrapper(Model):
+        extra: Plain | None = Field(default=None)
 
     assert Wrapper.viur_structure()["extra"]["type"] == "record"
 
 
 def test_viur_record_structure_is_cached_and_fails_fast():
-    structure = Address.viur_structure()
-    assert Address.viur_structure() is structure
+    structure = Address._viur_structure_shared()
+    assert Address._viur_structure_shared() is structure
+    assert Address.viur_structure() == structure
+    assert Address.viur_structure() is not structure  # a copy, like Model
     assert "key" not in structure  # no system fields on records
 
     import pytest as _pytest
     with _pytest.raises(TypeError, match="no bone mapping"):
-        class BrokenRecord(ViURRecord):
-            blob: dict = ViURField(default=None)
+        class BrokenRecord(Record):
+            blob: dict = Field(default=None)
 
 
 def test_recordjson_none_passthrough():

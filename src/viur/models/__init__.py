@@ -1,29 +1,11 @@
+"""viur-models — SQLModel-backed models for ViUR.
+
+``Model``/``Record`` (base classes), ``Field`` (bone metadata), the bone-typed
+field types, ``structure_for_model``, and the boot wiring ``install``/``setup``.
+Importing has no side effects. Bone mapping tables: ``docs/bones.md``.
 """
-viur-models — SQLModel definitions for ViUR applications.
-
-Public surface:
-
-- [`ViURModel`][viur.models.ViURModel] — base class of all models; provides
-  the system fields (``id`` → ``key``, ``creationdate``, ``changedate``),
-  the skeleton-compatible ``viur_structure()`` and the opaque key encoding.
-- [`ViURField`][viur.models.ViURField] — ``sqlmodel.Field()`` wrapper that
-  carries the ViUR bone parameters (``descr``, ``visible``, ``params``, …)
-  as metadata.
-- [`Text`][viur.models.Text] / [`Email`][viur.models.Email] /
-  [`Country`][viur.models.Country] — field types that carry their bone type
-  in the annotation; [`BoneType`][viur.models.BoneType] +
-  [`register_bone_type`][viur.models.register_bone_type] define new ones.
-- [`structure_for_model`][viur.models.structure_for_model] — the low-level
-  structure builder (usable directly as a library).
-
-Design rationale and the full mapping tables live in
-``analysis/01-viurfield-und-structure-mapping.md``.
-
-.. note::
-   Importing this package has **no side effects** — it does not patch
-   viur-core and does not register any models on its own.
-"""
-from .base import ViURModel, ViURRecord
+from .base import Model, Record
+from .boot import install, setup
 from .client import map_validation_error
 from .config import ModelsConfig, install_config
 from .crossstore import (
@@ -37,7 +19,7 @@ from .crossstore import (
     refresh_for_target,
 )
 from .db import RecordJSON
-from .fields import ALLOWED_SCHEMA_EXTRA, VIUR_META_KEY, ViURField
+from .fields import ALLOWED_SCHEMA_EXTRA, VIUR_META_KEY, Field
 from .links import RelationLink
 from .structure import structure_for_model
 from .types import (
@@ -71,16 +53,19 @@ __all__ = [
     "Code",
     "Color",
     "Country",
-    "CrossStoreIndex",
     "Credential",
+    "CrossStoreIndex",
     "Email",
+    "Field",
     "FileRef",
     "Json",
     "Language",
+    "Model",
     "ModelsConfig",
     "Password",
     "Phone",
     "Raw",
+    "Record",
     "RecordJSON",
     "RelationLink",
     "SkeletonLink",
@@ -92,9 +77,7 @@ __all__ = [
     "Uri",
     "UserRef",
     "VIUR_META_KEY",
-    "ViURField",
-    "ViURModel",
-    "ViURRecord",
+    "install",
     "install_config",
     "install_refresh_hooks",
     "map_validation_error",
@@ -102,6 +85,7 @@ __all__ = [
     "refresh_for_target",
     "register_bone_type",
     "set_default_languages",
+    "setup",
     "structure_for_model",
     "__version__",
 ]

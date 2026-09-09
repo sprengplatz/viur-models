@@ -16,8 +16,8 @@ from viur.models import (
     SkeletonLink,
     SkeletonRef,
     UserRef,
-    ViURField,
-    ViURModel,
+    Field,
+    Model,
     db,
 )
 from viur.models import crossstore
@@ -50,11 +50,11 @@ def _patched_core(monkeypatch):
     )
 
 
-class Article(ViURModel, table=True):
+class Article(Model, table=True):
     __tablename__ = "viur_models_test_xstore_article"
-    title: str = ViURField(default="", required=False)
-    author: UserRef() | None = ViURField(default=None, sa_type=JSON, descr="Autor")
-    reviewers: SkeletonRef("user", multiple=True) | None = ViURField(
+    title: str = Field(default="", required=False)
+    author: UserRef() | None = Field(default=None, sa_type=JSON, descr="Autor")
+    reviewers: SkeletonRef("user", multiple=True) | None = Field(
         default=None, sa_type=JSON, descr="Reviewer",
     )
 
@@ -101,8 +101,8 @@ def test_crossstore_structure():
 
 
 def test_fileref_shape():
-    class WithUpload(ViURModel):
-        upload: FileRef() | None = ViURField(default=None, sa_type=JSON)
+    class WithUpload(Model):
+        upload: FileRef() | None = Field(default=None, sa_type=JSON)
 
     bone = WithUpload.viur_structure()["upload"]
     assert bone["type"] == "relational.tree.leaf.file.file"
@@ -163,8 +163,8 @@ def test_type_suffix_and_extras():
         "file", type_suffix="tree.leaf.file", extras={"valid_mime_types": None},
     )
 
-    class WithFile(ViURModel):
-        upload: Special | None = ViURField(default=None, sa_type=JSON)
+    class WithFile(Model):
+        upload: Special | None = Field(default=None, sa_type=JSON)
 
     bone = WithFile.viur_structure()["upload"]
     assert bone["type"] == "relational.tree.leaf.file.file"
@@ -178,8 +178,8 @@ def test_class_definition_defers_registry_lookup(monkeypatch):
 
     monkeypatch.setattr(crossstore, "resolve_relskel", _boom)
 
-    class Deferred(ViURModel):
-        ref: SkeletonRef("whatever") | None = ViURField(default=None, sa_type=JSON)
+    class Deferred(Model):
+        ref: SkeletonRef("whatever") | None = Field(default=None, sa_type=JSON)
 
     assert Deferred.viur_crossstore()["ref"].kind == "whatever"  # no resolve yet
 
@@ -288,7 +288,7 @@ class ArticleReviewLink(SkeletonLink, table=True):
     )
 
 
-class Paper(ViURModel, table=True):
+class Paper(Model, table=True):
     __tablename__ = "viur_models_test_xstore_paper"
 
     viur_relation_meta = {
@@ -296,7 +296,7 @@ class Paper(ViURModel, table=True):
                     "multiple": {"min": 0, "max": 2, "duplicates": False}},
     }
 
-    title: str = ViURField(default="", required=False)
+    title: str = Field(default="", required=False)
     reviews: list[ArticleReviewLink] = Relationship(
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -538,6 +538,84 @@ def test_index_is_maintained_on_writes(module):
         assert _index_rows(session) == []
 
 
+def test_from_client_skips_null_cross_store_entries():
+    """JSON ``null`` and the clients' ``"None"`` token clear a reference; empty entries in
+    a multiple reference are skipped, the rest is resolved."""
+    instance, errors = Article.viur_from_client(
+        {"title": "t", "author": None, "reviewers": ["", "None", "user/1"]},
+    )
+    assert errors == []
+    assert instance.author is None
+    assert [dest["key"] for dest in instance.reviewers] == ["user/1"]
+
+
+def test_refresh_reads_each_target_only_once(module, monkeypatch):
+    """The refresh walks ROWS, but must not re-read the same target per row.
+
+    Every read is a datastore round-trip made while an SQL transaction is
+    open, so N referencing rows used to mean N identical network calls.
+    """
+    from viur.models import refresh_crossstore, refresh_for_target
+
+    reads = []
+    monkeypatch.setattr(
+        crossstore, "read_dest",
+        lambda marker, key: (reads.append(key), KNOWN.get(key))[1],
+    )
+
+    # three rows referencing user/1 through the SAME bone
+    module.add(title="a", author="user/1", skey="csrf")
+    module.add(title="b", author="user/1", skey="csrf")
+    module.add(title="c", author="user/1", skey="csrf")
+    reads.clear()  # the adds resolve the key themselves; not what is measured
+
+    assert refresh_for_target("user/1")["checked"] == 3   # three rows …
+    assert reads == ["user/1"]                            # … one read
+
+    reads.clear()
+    assert refresh_crossstore(Article)["checked"] == 3    # the full scan too
+    assert reads == ["user/1"]
+
+
+def test_refresh_reads_once_per_distinct_view(module, monkeypatch):
+    """Two bones onto the same kind with different ``ref_keys`` build
+    different snapshots, so they are cached apart — one read each, no matter
+    how many rows use them."""
+    from viur.models import refresh_for_target
+
+    reads = []
+    monkeypatch.setattr(
+        crossstore, "read_dest",
+        lambda marker, key: (reads.append(marker.ref_keys), KNOWN.get(key))[1],
+    )
+
+    # author is a UserRef (name/firstname/lastname), reviewers a plain
+    # SkeletonRef (name) — same kind, same key, two different views
+    module.add(title="a", author="user/1", reviewers=["user/1"], skey="csrf")
+    module.add(title="b", author="user/1", reviewers=["user/1"], skey="csrf")
+    reads.clear()
+
+    assert refresh_for_target("user/1")["checked"] == 4   # 2 rows x 2 bones
+    assert sorted(reads) == [("name",), ("name", "firstname", "lastname")]
+
+
+def test_refresh_hands_out_independent_dest_dicts(module, monkeypatch):
+    """The cache must not leak one shared dict into several rows — mutating
+    one row's snapshot would otherwise change the others."""
+    from viur.models import refresh_for_target
+
+    monkeypatch.setattr(crossstore, "read_dest", lambda marker, key: KNOWN.get(key))
+    module.add(title="a", author="user/1", skey="csrf")
+    module.add(title="b", author="user/1", skey="csrf")
+    refresh_for_target("user/1")
+
+    with db.get_session() as session:
+        a, b = session.exec(select(Article).order_by(Article.title)).all()
+    assert a.author == b.author and a.author is not b.author
+    a.author["name"] = "mutated"
+    assert b.author["name"] == "alice@example.com"
+
+
 def test_refresh_for_target_updates_only_matching_rows(module):
     from viur.models import refresh_for_target
 
@@ -648,6 +726,21 @@ def test_refresh_for_target_link_tables_and_policy(module, monkeypatch):
 # --------------------------------------------------------------------------- #
 # automatic trigger: install_refresh_hooks                                     #
 # --------------------------------------------------------------------------- #
+
+def test_referenced_kinds_is_cached_until_a_class_registers():
+    """Consulted on every skeleton save — so it must not rebuild each time,
+    yet it must see models imported AFTER the hooks were installed."""
+    first = crossstore.referenced_kinds()
+    assert crossstore.referenced_kinds() is first          # served from cache
+    assert "user" in first and "kind_added_late" not in first
+
+    class LateComer(Model):                                 # registers itself
+        ref: SkeletonRef("kind_added_late") | None = Field(default=None, sa_type=JSON)
+
+    rebuilt = crossstore.referenced_kinds()
+    assert rebuilt is not first and "kind_added_late" in rebuilt
+    assert crossstore.referenced_kinds() is rebuilt         # and cached again
+
 
 def test_install_refresh_hooks(module, monkeypatch):
     import sys

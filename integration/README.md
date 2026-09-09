@@ -38,7 +38,7 @@ python -m pytest -p no:viur_light_mock -c integration/pytest.ini integration
 - **`test_package_import.py`** — the `viur` namespace package composes
   correctly: `viur.models` imports side-effect-free next to the real
   `viur.core` without shadowing it.
-- **`test_structure_parity.py`** — the core promise: a ViURModel and its
+- **`test_structure_parity.py`** — the core promise: a Model and its
   skeleton twin (`skeletons.ParityRefSkel`) emit the **same structure**,
   field by field (str, str.email, numeric, bool, date, select) and for the
   system bones (`key`, `creationdate`, `changedate`), compared against the

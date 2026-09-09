@@ -1,4 +1,4 @@
-"""Dump & fromClient parity — ViURModel vs. the REAL viur-core skeleton.
+"""Dump & fromClient parity — Model vs. the REAL viur-core skeleton.
 
 Complements ``test_structure_parity``: same twin pair, but comparing the
 **value dumps** and the **error shapes** of client input validation.

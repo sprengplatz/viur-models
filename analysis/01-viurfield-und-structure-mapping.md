@@ -1,9 +1,9 @@
-# ViURField & Structure-Mapping
+# Field & Structure-Mapping
 
-**Status:** Umgesetzt (§4–§8 inkl. Relationen-Mapping §5.4: ViURField, Typen, Structure, Dump, Fehler-Mapping, Keys) · **Bezug:** viur-core 3.9.0.dev6, viur-actions (Envelope v2), SQLModel ≥ 0.0.39 / Pydantic v2
+**Status:** Umgesetzt (§4–§8 inkl. Relationen-Mapping §5.4: Field, Typen, Structure, Dump, Fehler-Mapping, Keys) · **Bezug:** viur-core 3.9.0.dev6, viur-actions (Envelope v2), SQLModel ≥ 0.0.39 / Pydantic v2
 
 Dieses Dokument spezifiziert, wie SQLModel-Definitionen in viur-models die
-ViUR-Bone-Metadaten tragen (`ViURField`), wie daraus die `structure()`
+ViUR-Bone-Metadaten tragen (`Field`), wie daraus die `structure()`
 erzeugt wird, die Admin-Clients erwarten, und wie Pydantic-Validierungsfehler
 auf viur-cores Fehlerformat abgebildet werden. Der `SQLList`-Prototyp selbst
 (Session-Lifecycle, Actions) wird nur angerissen und in einem Folgedokument
@@ -74,11 +74,11 @@ class ReadFromClientError:
     invalidatedFields: list[str] | None
 ```
 
-## 3. `ViURModel` — die Basisklasse
+## 3. `Model` — die Basisklasse
 
 ```python
 # viur.models.base
-class ViURModel(SQLModel):
+class Model(SQLModel):
     """Gemeinsame Basis aller viur-models. Kein table=True — das setzen
     erst die konkreten Models im Projektordner ``models/``."""
 
@@ -87,7 +87,7 @@ class ViURModel(SQLModel):
     def viur_structure(cls) -> dict: ...      # §6
     def viur_dump(self) -> dict: ...          # Werte, JSON-serialisierbar
     @classmethod
-    def viur_from_client(cls, data: dict) -> tuple["ViURModel | None", list[ReadFromClientError]]: ...  # §7
+    def viur_from_client(cls, data: dict) -> tuple["Model | None", list[ReadFromClientError]]: ...  # §7
 
     # --- Key-Handling (siehe §8) ---
     @property
@@ -108,7 +108,7 @@ class Renderable(t.Protocol):
 ```
 
 `SkeletonInstance` erfüllt das Protokoll bereits de facto (§2). Für
-`ViURModel` gibt es einen schmalen Adapter `ModelInstance`, der eine
+`Model` gibt es einen schmalen Adapter `ModelInstance`, der eine
 Model-Instanz (oder die Klasse, für `add`-Formulare) wrappt und
 `dump()`/`structure()` auf `viur_dump()`/`viur_structure()` delegiert.
 Damit rendert **derselbe** Envelope-Code beide Welten; Parität wird zur
@@ -117,10 +117,10 @@ Typfrage statt zur Disziplinfrage.
 ### 3.2 Systemfelder
 
 Skeletons haben Systembones (`key`, `creationdate`, `changedate`), die
-Clients voraussetzen. `ViURModel` liefert die Entsprechungen als
+Clients voraussetzen. `Model` liefert die Entsprechungen als
 vordefinierte Spalten + Structure-Einträge:
 
-| Skeleton-Bone | ViURModel-Feld | SQL | Structure |
+| Skeleton-Bone | Model-Feld | SQL | Structure |
 |---|---|---|---|
 | `key` | `id` (PK) → `viur_key` (kodiert, §8) | `INTEGER PRIMARY KEY` o. UUID | `"key"`, readonly, `visible: False`, descr `"Key"` |
 | `creationdate` | `creationdate` | `TIMESTAMP` | `"date"`, readonly, `visible: False`, `compute: {"method": "Once"}` |
@@ -130,9 +130,9 @@ Die Werte sind durch den Parity-Test gegen die echten System-Bones
 gepinnt. Im `dump()` erscheint `key` als kodierter String — **nie** der
 nackte PK.
 
-## 4. `ViURField` — Felddefinition
+## 4. `Field` — Felddefinition
 
-`ViURField` ist ein dünner Wrapper um `sqlmodel.Field()`. Er nimmt die
+`Field` ist ein dünner Wrapper um `sqlmodel.Field()`. Er nimmt die
 Bone-Parameter entgegen, legt sie unter `json_schema_extra["viur"]` in der
 Pydantic-`FieldInfo` ab und reicht alles andere unverändert an SQLModel
 durch. Das Model bleibt dadurch ein **reines SQLModel** (Alembic, FastAPI,
@@ -140,7 +140,7 @@ Plain-SQLAlchemy funktionieren unverändert); die ViUR-Semantik ist reine
 Metadaten-Annotation.
 
 ```python
-def ViURField(
+def Field(
     default: t.Any = PydanticUndefined,
     *,
     # --- ViUR-Bone-Parameter (→ json_schema_extra["viur"]) ---
@@ -179,7 +179,7 @@ Bewusste Einschränkungen der Signatur:
 - **Keine Doppel-Wahrheit:** Constraints, die Pydantic/SQL bereits kennt
   (`max_length`, `ge`/`le`, `unique`, `index`, Nullability, Default), werden
   **nicht** als ViUR-Parameter dupliziert, sondern aus der `FieldInfo`
-  abgeleitet (§5.1). `ViURField` trägt nur, was SQL/Pydantic nicht
+  abgeleitet (§5.1). `Field` trägt nur, was SQL/Pydantic nicht
   ausdrücken kann (`descr`, `visible`, `params`, …).
 - **Kein Bone-Typ-Parameter:** Der Bone-Typ wird vom **Python-Typ**
   bestimmt, nie von einem String-Parameter — dedizierte Typen siehe §5.5.
@@ -190,7 +190,7 @@ Bewusste Einschränkungen der Signatur:
 Ein Feld ohne besondere Anforderungen darf weiterhin plain annotiert werden
 (`name: str`) oder `sqlmodel.Field` direkt nutzen — das Structure-Mapping
 arbeitet über `model_fields` und behandelt fehlende `viur`-Metadaten mit
-Defaults. `ViURField` ist Komfort, kein Zwang.
+Defaults. `Field` ist Komfort, kein Zwang.
 
 ## 5. Typ-Mapping: Pydantic/SQLModel → Bone-Structure
 
@@ -267,7 +267,7 @@ String-Parameter. Zwei Mechanismen (`viur.models.types`):
 
 Nicht abbildbare Typen (z. B. `dict`, verschachtelte Pydantic-Models ohne
 Relationship) führen beim Structure-Aufbau zu einem **harten Fehler zur
-Klassendefinitionszeit** (`__init_subclass__` in `ViURModel`), nicht erst
+Klassendefinitionszeit** (`__init_subclass__` in `Model`), nicht erst
 zur Request-Zeit — dieselbe Fail-fast-Philosophie wie das Hook-Wiring in
 viur-actions.
 
@@ -283,8 +283,8 @@ unterstützt.
 Ein FK-Paar
 
 ```python
-class Feedback(ViURModel, table=True):
-    author_id: int | None = ViURField(default=None, foreign_key="user.id", descr="Autor")
+class Feedback(Model, table=True):
+    author_id: int | None = Field(default=None, foreign_key="user.id", descr="Autor")
     author: "User" = Relationship()
 ```
 
@@ -409,7 +409,7 @@ Herzstück der Qualitätssicherung, läuft gegen den **echten** viur-core:
 
 1. **Structure-Parität:** äquivalentes Paar aus Skeleton (`StringBone`,
    `NumericBone`, `SelectBone`, `DateBone`, `RelationalBone`) und
-   `ViURModel`; Assertion: identische Structure-Dicts pro Feld (modulo
+   `Model`; Assertion: identische Structure-Dicts pro Feld (modulo
    dokumentierter v1-Ausnahmen aus §9 — die Ausnahmenliste steht im Test).
 2. **Fehler-Parität:** gleicher invalider Payload gegen `skel.fromClient`
    und `viur_from_client`; Assertion: gleiche Severity + `fieldPath`-Shape.
@@ -421,7 +421,7 @@ Herzstück der Qualitätssicherung, läuft gegen den **echten** viur-core:
 ```python
 # deploy/models/feedback.py
 import enum
-from viur.models import Country, Email, Text, ViURField, ViURModel
+from viur.models import Country, Email, Text, Field, Model
 
 
 class FeedbackKind(enum.Enum):
@@ -429,13 +429,13 @@ class FeedbackKind(enum.Enum):
     COMPLAINT = "complaint"
 
 
-class Feedback(ViURModel, table=True):   # id/creationdate/changedate kommen aus der Basis
-    name: str = ViURField(descr="Name", max_length=100)
-    mail: Email = ViURField(descr="E-Mail")
-    rating: int = ViURField(descr="Bewertung", ge=1, le=5)
-    kind: FeedbackKind = ViURField(descr="Art")
-    country: Country | None = ViURField(default=None, descr="Land")
-    message: Text = ViURField(descr="Nachricht", required=False, default="")
+class Feedback(Model, table=True):   # id/creationdate/changedate kommen aus der Basis
+    name: str = Field(descr="Name", max_length=100)
+    mail: Email = Field(descr="E-Mail")
+    rating: int = Field(descr="Bewertung", ge=1, le=5)
+    kind: FeedbackKind = Field(descr="Art")
+    country: Country | None = Field(default=None, descr="Land")
+    message: Text = Field(descr="Nachricht", required=False, default="")
 ```
 
 ergibt (Auszug, Feld `rating`):

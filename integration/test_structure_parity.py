@@ -1,8 +1,8 @@
-"""Structure parity — ViURModel emission vs. the REAL viur-core bones.
+"""Structure parity — Model emission vs. the REAL viur-core bones.
 
 The core promise of viur-models (analysis/01 §1): clients cannot tell a
 SQL-backed module from a skeleton-backed one. These tests hold the emitted
-structure of a ViURModel against the structure of its skeleton twin
+structure of a Model against the structure of its skeleton twin
 (``skeletons.ParityRefSkel``), field by field.
 
 ``sortindex`` is excluded — the skeleton counts its own system bones (incl.
@@ -14,16 +14,16 @@ from datetime import datetime
 
 from skeletons import ParityRefSkel
 
-from viur.models import Email, ViURField, ViURModel
+from viur.models import Email, Field, Model
 
 
-class ParityModel(ViURModel):
-    name: str = ViURField(descr="Name", max_length=100)
-    mail: Email | None = ViURField(default=None, descr="Mail")
-    rating: int | None = ViURField(default=None, ge=1, le=5, descr="Rating")
-    active: bool | None = ViURField(default=None, descr="Active")
-    due: datetime | None = ViURField(default=None, descr="Due")
-    state: t.Literal["new", "done"] | None = ViURField(
+class ParityModel(Model):
+    name: str = Field(descr="Name", max_length=100)
+    mail: Email | None = Field(default=None, descr="Mail")
+    rating: int | None = Field(default=None, ge=1, le=5, descr="Rating")
+    active: bool | None = Field(default=None, descr="Active")
+    due: datetime | None = Field(default=None, descr="Due")
+    state: t.Literal["new", "done"] | None = Field(
         default=None, descr="State", values={"new": "New", "done": "Done"},
     )
 

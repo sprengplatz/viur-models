@@ -1,18 +1,5 @@
-"""Field types that carry their bone type in the annotation.
-
-The bone type of a field is decided by its **Python type**, never by a
-string parameter: ``str`` maps to ``"str"``, ``Email`` to ``"str.email"``,
-``Text`` to ``"text"``, :class:`pydantic_extra_types.country.CountryAlpha2`
-to ``"select.country"``. Where the pydantic ecosystem already has a
-semantic type, viur-models maps it (see :data:`BONE_TYPE_REGISTRY`); where
-none exists, a dedicated type is one ``Annotated`` alias away:
-
-    Slug = t.Annotated[str, BoneType("str.slug")]
-
-pydantic keeps unknown ``Annotated`` metadata objects in
-``FieldInfo.metadata``, where the structure mapping picks the marker up;
-validation and the SQL column type stay those of the underlying type.
-"""
+"""Field types carrying their bone type: ``Annotated[T, BoneType(...)]`` aliases,
+``BONE_TYPE_REGISTRY`` for foreign types."""
 import dataclasses
 import typing as t
 
@@ -23,18 +10,13 @@ from pydantic_extra_types.country import CountryAlpha2
 
 @dataclasses.dataclass(frozen=True)
 class BoneType:
-    """Annotation marker that sets the bone type of a field.
+    """Annotation marker setting a field's bone type.
 
-    :param name: The ``type`` string emitted in the structure
-        (e.g. ``"str.email"``).
-    :param extras: Additional structure keys for this bone type.
-    :param replace: If ``True``, the base type's structure extras are
-        dropped entirely (``emptyvalue``/``extras`` define the bone alone) —
-        for bone types that are not a refinement of their Python type.
-    :param emptyvalue: The ``emptyvalue`` to emit; only used with ``replace``.
-    :param write_only: The value never appears in dumps (``viur_dump`` emits
-        the ``emptyvalue`` instead) — for secrets like ``Password`` /
-        ``Credential``, mirroring viur-core's read behavior.
+    :param name: Structure ``type`` string.
+    :param extras: Additional structure keys.
+    :param replace: Drop the Python type's structure; ``emptyvalue``/``extras`` define the bone.
+    :param emptyvalue: Emitted ``emptyvalue`` (with ``replace``).
+    :param write_only: Dumps emit the ``emptyvalue`` instead of the value.
     """
 
     name: str
@@ -46,60 +28,45 @@ class BoneType:
 
 @dataclasses.dataclass(frozen=True)
 class LanguageWrapper:
-    """Annotation marker produced by ``Language[X]`` — carries the inner
-    (per-language) value type."""
+    """Marker produced by ``Language[X]``; ``inner`` is the per-language type."""
 
     inner: t.Any
 
 
 class Language:
-    """Wrapper type for multilingual fields — the type describes the data
-    structure, like ``list[X]`` does::
-
-        title: Language[str] = ViURField(languages=("de", "en"), sa_type=JSON, default=None)
-        body: Language[Text] | None = ViURField(default=None, sa_type=JSON)
-
-    The value is a ``{lang: value}`` dict (JSON column — pass
-    ``sa_type=JSON``); the bone structure carries the inner type's shape
-    plus the ``languages`` list (``StringBone(languages=…)`` analogue).
-    The language list comes from ``ViURField(languages=…)`` or, when
-    omitted, from :func:`set_default_languages`.
-    """
+    """``Language[X]``: ``{lang: value}`` dict in a JSON column; languages from
+    ``Field(languages=…)`` or ``set_default_languages``."""
 
     def __class_getitem__(cls, inner: t.Any) -> t.Any:
         return t.Annotated[dict[str, str | None], LanguageWrapper(inner)]
 
 
-#: Fallback language list for ``Language[X]`` fields without an explicit
-#: ``ViURField(languages=…)`` — set once at app boot.
+#: Fallback for ``Language[X]`` fields without ``Field(languages=…)``.
 DEFAULT_LANGUAGES: tuple[str, ...] | None = None
 
 
 def set_default_languages(*codes: str) -> None:
-    """Set the project-wide default language list (e.g. at app boot,
-    mirroring ``conf.i18n.available_languages``)."""
+    """Project-wide default language list."""
     global DEFAULT_LANGUAGES
     DEFAULT_LANGUAGES = tuple(codes) or None
 
 
 Text = t.Annotated[str, BoneType("text", extras={"valid_html": None}, replace=True, emptyvalue="")]
-"""Multiline/rich-text field — emits ``TextBone``'s ``"text"`` structure."""
+"""``TextBone`` (``"text"``)."""
 
 Email = t.Annotated[str, BoneType("str.email")]
-"""E-mail field — emits ``EmailBone``'s ``"str.email"`` with ``str`` extras."""
+"""``EmailBone`` (``"str.email"``)."""
 
 Raw = t.Annotated[str, BoneType("raw", replace=True)]
-"""Unprocessed string — emits ``RawBone``'s ``"raw"`` structure."""
+"""``RawBone`` (``"raw"``)."""
 
 Code = t.Annotated[str, BoneType("raw.code", replace=True, extras={"indexed": False})]
-"""Source-code field — ``CodeBone``'s ``"raw.code"`` (JinjaBone/LogicsBone/
-PythonBone share the type string; alias further names as needed). Like
-``CodeBone``, not indexed."""
+"""``CodeBone`` (``"raw.code"``), not indexed."""
 
 Color = t.Annotated[str, BoneType("color", replace=True)]
-"""Color value — emits ``ColorBone``'s ``"color"`` structure."""
+"""``ColorBone`` (``"color"``)."""
 
-#: ``PhoneBone``'s validation regex, pinned against viur-core 3.9.
+#: ``PhoneBone`` regex, viur-core 3.9.
 PHONE_TEST_PATTERN = r"^\+?(\d{1,3})[-\s]?(\d{1,4})[-\s]?(\d{1,4})[-\s]?(\d{1,9})$"
 
 _PHONE_EXTRAS = {"test": PHONE_TEST_PATTERN, "default_country_code": None}
@@ -113,15 +80,10 @@ _URI_EXTRAS = {
 }
 
 Phone = t.Annotated[str, BoneType("str.phone", extras=dict(_PHONE_EXTRAS))]
-"""Phone number — ``PhoneBone``'s ``"str.phone"`` with its client-side test
-regex. Pair with ``max_length=15`` for full structure parity. (For real
-number validation use pydantic-extra-types' ``PhoneNumber`` — registered
-below when the optional ``phonenumbers`` package is installed.)"""
+"""``PhoneBone`` (``"str.phone"``); ``max_length=15`` for parity. Real validation: pydantic ``PhoneNumber``."""
 
 Uri = t.Annotated[str, BoneType("uri", replace=True, extras=dict(_URI_EXTRAS))]
-"""URI/URL field — emits ``UriBone``'s ``"uri"`` structure (default hints).
-(For real URL validation use pydantic's ``AnyUrl``/``HttpUrl`` — registered
-below; those need ``sa_type=String`` as they are not ``str`` subclasses.)"""
+"""``UriBone`` (``"uri"``), default hints. Real validation: pydantic ``AnyUrl`` with ``sa_type=String``."""
 
 Uid = t.Annotated[str, BoneType(
     "uid",
@@ -130,43 +92,35 @@ Uid = t.Annotated[str, BoneType(
         "fillchar": "*",
         "length": 13,
         "pattern": "*",
-        # UidBone semantics: server-generated once, locked unique, kept on clone.
         "readonly": True,
         "unique": 1,  # UniqueLockMethod.SameValue
         "clone_behavior": {"strategy": "set_default"},
         "compute": {"method": "Once"},
     },
 )]
-"""Unique-id string — ``UidBone``'s ``"uid"`` structure (readonly, unique).
-Server-side generation is the module's job (v1 does not auto-fill it)."""
+"""``UidBone`` (``"uid"``): readonly, unique. The module supplies the value."""
 
 SortIndex = t.Annotated[float, BoneType(
     "numeric.sortindex",
-    # like SortIndexBone: a fresh index on clone, not a copy
     extras={"clone_behavior": {"strategy": "set_default"}},
 )]
-"""Sort-index number — ``SortIndexBone``'s ``"numeric.sortindex"`` with the
-float numeric extras (precision 8, ``decimal: false``)."""
+"""``SortIndexBone`` (``"numeric.sortindex"``)."""
 
 Json = t.Annotated[dict, BoneType(
     "raw.json",
     replace=True,
-    extras={"schema": {}, "indexed": False},  # like JsonBone: not indexed
+    extras={"schema": {}, "indexed": False},
 )]
-"""Free-form JSON — ``JsonBone``'s ``"raw.json"``. The column type needs an
-explicit ``sa_type`` (e.g. ``ViURField(default_factory=dict,
-sa_type=sqlalchemy.JSON)``) — SQLModel cannot map ``dict`` on its own."""
+"""``JsonBone`` (``"raw.json"``); needs an explicit ``sa_type``."""
 
 Credential = t.Annotated[str, BoneType(
     "str.credential",
     extras={"maxlength": None, "minlength": None},
     write_only=True,
 )]
-"""Credential/secret string — ``CredentialBone``'s ``"str.credential"``.
-Write-only: the stored value never appears in dumps (reads emit ``""``)."""
+"""``CredentialBone`` (``"str.credential"``), write-only."""
 
-#: ``PasswordBone``'s complexity checks, pinned against viur-core 3.9
-#: (regex, client-facing message, blocking).
+#: ``PasswordBone`` tests (regex, message, blocking), viur-core 3.9.
 PASSWORD_TESTS = [
     ["^.*[A-Z].*$", "The password entered has no capital letters.", False],
     ["^.*[a-z].*$", "The password entered has no lowercase letters.", False],
@@ -187,29 +141,13 @@ Password = t.Annotated[str, BoneType(
         "test_threshold": 4,
     },
 )]
-"""Password field — ``PasswordBone``'s ``"password"`` structure, write-only.
-
-.. warning::
-    **Hashing is not automatic.** Hash the incoming value in your module's
-    ``onAdd``/``onEdit`` hooks (viur-core uses PBKDF2) — viur-models only
-    guarantees the value never leaves the model in dumps.
-"""
+"""``PasswordBone`` (``"password"``), write-only. Hashing is NOT automatic — do it in ``onAdd``/``onEdit``."""
 
 
 def Spatial(
     bounds_lat: tuple[float, float], bounds_lng: tuple[float, float],
 ) -> t.Any:
-    """Build a spatial field type — ``SpatialBone``'s ``"spatial"``.
-
-    Bounds are per-field, so this is a factory instead of a fixed alias::
-
-        Position = Spatial(bounds_lat=(46.0, 56.0), bounds_lng=(4.0, 17.0))
-        pos: Position | None = ViURField(default=None, sa_type=JSON)
-
-    Values are ``(lat, lng)`` pairs (dumped as a JSON list, like the real
-    bone); client input is accepted dotted (``pos.lat=…&pos.lng=…``) and as
-    a two-element list.
-    """
+    """``SpatialBone`` (``"spatial"``) type factory; values are ``(lat, lng)``, stored as JSON."""
     return t.Annotated[tuple[float, float], BoneType(
         "spatial",
         replace=True,
@@ -219,16 +157,11 @@ def Spatial(
 
 
 BONE_TYPE_REGISTRY: dict[type, BoneType] = {}
-"""Python types (e.g. from pydantic-extra-types) mapped to bone types.
-
-The structure mapping walks a field type's MRO against this registry, so
-subclasses inherit their base type's bone mapping. An ``Annotated``
-:class:`BoneType` marker on the field always wins over the registry.
-"""
+"""Python type → ``BoneType``, matched along the MRO; an ``Annotated`` marker wins."""
 
 
 def register_bone_type(python_type: type, marker: BoneType) -> None:
-    """Map a Python type to a bone type for the structure emission."""
+    """Map a Python type to a bone type."""
     BONE_TYPE_REGISTRY[python_type] = marker
 
 
@@ -239,8 +172,7 @@ def _country_values() -> dict[str, str]:
 
 
 Country = CountryAlpha2
-"""ISO-3166 alpha-2 country field — emits ``SelectCountryBone``'s
-``"select.country"``; validation comes from pydantic-extra-types."""
+"""``SelectCountryBone`` (``"select.country"``), validated by pydantic-extra-types."""
 
 register_bone_type(
     CountryAlpha2,
@@ -248,21 +180,9 @@ register_bone_type(
 )
 
 
-# --------------------------------------------------------------------------- #
-# pydantic ecosystem registrations                                            #
-# --------------------------------------------------------------------------- #
-# Where pydantic already ships a semantic type, it maps to the matching bone
-# type via the registry — the validated type IS the declaration, no custom
-# alias needed. Constrained types (``constr``/``conint``/``condecimal``) need
-# no registration at all: their constraints land in ``FieldInfo.metadata``
-# and feed the regular derivation (``maxlength``, ``min``/``max``, …).
-#
-# NOTE: ``AnyUrl``/``HttpUrl`` and ``Color`` are not ``str`` subclasses —
-# such columns need an explicit ``sa_type`` (e.g. ``sqlalchemy.String``);
-# dumps stringify them.
-
-# EmailStr is no ``str`` subclass in pydantic ≥2.13 — the marker carries the
-# full str-shape (like EmailBone: maxlength 254).
+# pydantic ecosystem types. Constrained types (constr/conint/…) need no entry —
+# their constraints sit in FieldInfo.metadata. AnyUrl/Color are no str
+# subclasses: explicit sa_type, dumps stringify.
 register_bone_type(pydantic.EmailStr, BoneType(
     "str.email", replace=True, emptyvalue="",
     extras={"maxlength": 254, "minlength": None},
@@ -272,9 +192,9 @@ register_bone_type(PydanticColor, BoneType("color", replace=True))
 
 try:
     from pydantic_extra_types.phone_numbers import PhoneNumber as PydanticPhoneNumber
-except (ImportError, RuntimeError):  # pragma: no cover — optional ``phonenumbers``
+except (ImportError, RuntimeError):  # pragma: no cover
     PydanticPhoneNumber = None
-else:  # pragma: no cover — exercised only with ``phonenumbers`` installed
+else:  # pragma: no cover
     register_bone_type(
         PydanticPhoneNumber, BoneType("str.phone", extras=dict(_PHONE_EXTRAS)),
     )

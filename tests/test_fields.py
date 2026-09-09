@@ -1,13 +1,13 @@
-"""ViURField — metadata transport and schema_extra whitelist."""
+"""Field — metadata transport and schema_extra whitelist."""
 import pytest
 from sqlmodel import SQLModel
 
-from viur.models import VIUR_META_KEY, ViURField
+from viur.models import VIUR_META_KEY, Field
 
 
 class FieldsModel(SQLModel):
-    name: str = ViURField(descr="Name", params={"tooltip": "hint"})
-    code: str = ViURField(
+    name: str = Field(descr="Name", params={"tooltip": "hint"})
+    code: str = Field(
         default="",
         required=False,
         schema_extra={"pattern": "^[a-z]+$", "json_schema_extra": {"custom": 1}},
@@ -34,4 +34,4 @@ def test_schema_extra_passthrough_merges_with_user_json_schema_extra():
 
 def test_unknown_schema_extra_key_raises():
     with pytest.raises(TypeError, match="json_shema_extra|Unknown schema_extra"):
-        ViURField(schema_extra={"json_shema_extra": {}})  # typo must not vanish
+        Field(schema_extra={"json_shema_extra": {}})  # typo must not vanish

@@ -8,7 +8,10 @@ shadow ``viur.core``). See integration/README.md.
 """
 import os
 import pathlib
+import re
 import sys
+
+import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,3 +42,41 @@ from viur.core import conf  # noqa: E402 — after sys.path tweak, before skel i
 # makes integration/skeletons/*.py strip to ``/skeletons/*.py`` and match,
 # regardless of the launch directory. Set before any test imports a skeleton.
 conf.instance.project_base_path = pathlib.Path(_HERE)
+
+
+# --------------------------------------------------------------------------- #
+# Guard: one table name per suite                                             #
+# --------------------------------------------------------------------------- #
+# Every test model lands in the single, process-wide ``SQLModel.metadata``. A
+# second class with the same ``__tablename__`` does not fail with a readable
+# message: SQLAlchemy raises inside the class statement, pytest drops the
+# half-imported module from ``sys.modules``, the next module importing it
+# re-executes it — and the FIRST error that surfaces is "Table … already
+# defined" in a file that has nothing to do with the duplicate. Checking the
+# source text before collection turns that cascade into one clear sentence.
+# (Twin of the guard in tests/conftest.py.)
+
+_TABLENAME = re.compile(r"""^\s*__tablename__\s*=\s*["']([^"']+)["']""")
+
+
+def duplicate_tablenames(directory: pathlib.Path) -> dict[str, list[str]]:
+    """``__tablename__`` literals declared more than once across a suite's
+    modules -> ``{name: ["file:line", …]}``."""
+    seen: dict[str, list[str]] = {}
+    for path in sorted(directory.glob("*.py")):
+        for number, line in enumerate(path.read_text().splitlines(), start=1):
+            if match := _TABLENAME.match(line):
+                seen.setdefault(match.group(1), []).append(f"{path.name}:{number}")
+    return {name: places for name, places in seen.items() if len(places) > 1}
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    duplicates = duplicate_tablenames(pathlib.Path(__file__).parent)
+    if duplicates:
+        pytest.exit(
+            "duplicate __tablename__ across this suite's test models — every "
+            "model shares SQLModel.metadata, so the second definition breaks "
+            "collection of unrelated files:\n"
+            + "\n".join(f"  {name}: {', '.join(places)}" for name, places in duplicates.items()),
+            returncode=4,
+        )

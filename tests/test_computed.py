@@ -3,12 +3,12 @@ read-only bones derived from the instance at dump time, never stored."""
 from pydantic import computed_field
 from sqlmodel import Relationship
 
-from viur.models import Password, Text, ViURField, ViURModel, ViURRecord
+from viur.models import Password, Text, Field, Model, Record
 
 
-class Ticket(ViURModel):
-    name: str = ViURField(default="", required=False, descr="Name")
-    prio: int = ViURField(default=0, descr="Prio")
+class Ticket(Model):
+    name: str = Field(default="", required=False, descr="Name")
+    prio: int = Field(default=0, descr="Prio")
 
     @computed_field(json_schema_extra={"viur": {
         "descr": "Anzeige", "params": {"tooltip": "derived"},
@@ -88,8 +88,8 @@ def test_computed_degrades_to_emptyvalue_on_rejected_forms():
 # records                                                                      #
 # --------------------------------------------------------------------------- #
 
-class Score(ViURRecord):
-    points: int = ViURField(default=0, descr="Punkte")
+class Score(Record):
+    points: int = Field(default=0, descr="Punkte")
 
     @computed_field
     @property
@@ -97,8 +97,8 @@ class Score(ViURRecord):
         return f"{self.points}p"
 
 
-class Match(ViURModel):
-    score: Score | None = ViURField(default=None, descr="Score")
+class Match(Model):
+    score: Score | None = Field(default=None, descr="Score")
 
 
 def test_record_using_and_dump_include_computed():
@@ -112,12 +112,12 @@ def test_record_using_and_dump_include_computed():
 # relations — computed names work as viur_ref_keys                            #
 # --------------------------------------------------------------------------- #
 
-class ComputedAuthor(ViURModel, table=True):
+class ComputedAuthor(Model, table=True):
     __tablename__ = "viur_models_test_computed_author"
 
     viur_ref_keys = ("name", "handle")
 
-    name: str = ViURField(default="", required=False)
+    name: str = Field(default="", required=False)
 
     @computed_field
     @property
@@ -125,11 +125,11 @@ class ComputedAuthor(ViURModel, table=True):
         return f"@{self.name.lower()}"
 
 
-class ComputedPost(ViURModel, table=True):
+class ComputedPost(Model, table=True):
     __tablename__ = "viur_models_test_computed_post"
 
-    title: str = ViURField(default="", required=False)
-    author_id: int | None = ViURField(
+    title: str = Field(default="", required=False)
+    author_id: int | None = Field(
         default=None, foreign_key="viur_models_test_computed_author.id",
     )
     author: ComputedAuthor | None = Relationship()
