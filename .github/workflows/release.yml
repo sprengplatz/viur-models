@@ -28,7 +28,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install (overlay mode — real viur-core, in-memory datastore)
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps -e .
@@ -61,8 +61,8 @@ jobs:
             exit 1
           fi
 
-  release:
-    name: Build and publish GitHub Release
+  build:
+    name: Build wheel + sdist
     needs: [test, version-check]
     runs-on: ubuntu-latest
 
@@ -78,6 +78,48 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  # PyPI trusted publisher (one-time): project `spltz-viur-models` → Publishing
+  #   Owner: sprengplatz, Repository: viur-models, Workflow: release.yml, Environment: pypi
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/spltz-viur-models
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download Python dist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: Publish GitHub Release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Python dist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
 
       - name: Determine pre-release flag
         id: prerelease
