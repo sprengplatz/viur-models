@@ -15,7 +15,6 @@ authors = [
 keywords = ["viur", "models", "skeletons", "bones"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Framework :: ViUR",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
