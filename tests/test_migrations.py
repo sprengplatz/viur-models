@@ -107,7 +107,7 @@ def _clean_env(monkeypatch):
     """No inherited DSN, no configured engine, no conf preset."""
     monkeypatch.delenv(migrations.DSN_ENV_VAR, raising=False)
     db.reset()
-    install_config().engine = None
+    install_config().databases.clear()
     yield
     db.reset()
 
@@ -184,18 +184,14 @@ def test_configured_engine_keeps_its_password():
 
 
 def test_conf_preset_is_used_when_an_engine_is_set():
-    cfg = install_config()
-    cfg.engine = "sqlite"
-    cfg.sqlite_file = "/tmp/from-conf.sqlite3"
+    install_config().databases["default"] = {"engine": "sqlite", "sqlite_file": "/tmp/from-conf.sqlite3"}
     assert migrations.resolve_url(fallback_url="sqlite:///f.db") \
         == "sqlite:////tmp/from-conf.sqlite3"
 
 
 def test_misconfigured_conf_preset_surfaces_instead_of_falling_through():
     """A preset that cannot yield a URL is an error, not a reason to guess."""
-    cfg = install_config()
-    cfg.engine = "postgres"
-    cfg.postgres_dsn = ""
+    install_config().databases["default"] = {"engine": "postgres", "postgres_dsn": ""}
     with pytest.raises(RuntimeError, match="postgres_dsn"):
         migrations.resolve_url(fallback_url="sqlite:///f.db")
 

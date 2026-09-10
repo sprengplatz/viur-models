@@ -171,13 +171,11 @@ def test_url_from_preset_bigquery_requires_a_dsn():
 
 def test_url_from_conf_passes_the_bigquery_dsn():
     cfg = install_config()
-    cfg.engine = "bigquery"
-    cfg.bigquery_dsn = "bigquery://proj/ds"
+    cfg.databases["default"] = {"engine": "bigquery", "bigquery_dsn": "bigquery://proj/ds"}
     try:
         assert db.url_from_conf() == "bigquery://proj/ds"
     finally:
-        cfg.engine = None
-        cfg.bigquery_dsn = ""
+        cfg.databases.pop("default")
 
 
 # --------------------------------------------------------------------------- #
@@ -189,7 +187,7 @@ def test_ilike_uses_an_escape_clause_on_ordinary_backends():
 
     db.configure("sqlite://")
     try:
-        expression = _ilike(BQThing.__table__.c.name, r"al\%pha%")
+        expression = _ilike(BQThing.__table__.c.name, r"al\%pha%", BQThing)
         assert expression.modifiers.get("escape") == "\\"
     finally:
         db.reset()
@@ -202,7 +200,7 @@ def test_ilike_omits_the_escape_clause_on_bigquery():
 
     db.configure(_FakeEngine())
     try:
-        expression = _ilike(BQThing.__table__.c.name, r"al\%pha%")
+        expression = _ilike(BQThing.__table__.c.name, r"al\%pha%", BQThing)
         assert expression.modifiers.get("escape") is None
     finally:
         db.reset()

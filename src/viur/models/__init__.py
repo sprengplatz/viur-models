@@ -44,7 +44,7 @@ from .types import (
     set_default_languages,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ALLOWED_SCHEMA_EXTRA",

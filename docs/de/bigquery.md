@@ -42,14 +42,13 @@ class Sales(SQLList):
     json_version = 2
 
 # deploy/main.py
-conf.models.engine = "bigquery"
-conf.models.bigquery_dsn = "bigquery://my-project/analytics"
+conf.models.databases["default"] = {"engine": "bigquery", "bigquery_dsn": "bigquery://my-project/analytics"}
 viur.models.db.configure_from_conf()
 ```
 
 Credentials: Application Default Credentials auf App Engine; ein
 vorkonfigurierter Client über
-`conf.models.engine_options = {"connect_args": {"client": client}}` (Tests,
+`"engine_options": {"connect_args": {"client": client}}` im Eintrag (Tests,
 Emulator).
 
 ## Was das Backend übernimmt

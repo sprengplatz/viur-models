@@ -45,7 +45,7 @@ def _clean_conf_engine_and_hooks():
 def test_install_attaches_conf_and_applies_settings(tmp_path):
     engine = install(engine="sqlite", sqlite_file=str(tmp_path / "boot.sqlite3"))
     assert isinstance(conf.models, ModelsConfig)
-    assert conf.models.engine == "sqlite"
+    assert conf.models.databases["default"]["engine"] == "sqlite"
     assert engine.url.database == str(tmp_path / "boot.sqlite3")
     assert db.get_engine() is engine
 
@@ -63,10 +63,13 @@ def test_install_applies_every_conf_setting(monkeypatch):
         refresh_hooks=False,
         schema_report=False,
     ) == "engine-sentinel"
-    assert conf.models.postgres_dsn == "postgresql+pg8000://user:pw@10.0.0.1:5432/app"
-    assert conf.models.bigquery_dsn == "bigquery://project/dataset"
-    assert conf.models.sqlite_file == "unused.sqlite3"
-    assert conf.models.engine_options == options
+    assert conf.models.databases == {"default": {
+        "engine": "postgres",
+        "postgres_dsn": "postgresql+pg8000://user:pw@10.0.0.1:5432/app",
+        "bigquery_dsn": "bigquery://project/dataset",
+        "sqlite_file": "unused.sqlite3",
+        "engine_options": options,
+    }}
 
 
 def test_install_leaves_unset_arguments_alone(tmp_path):
@@ -75,8 +78,7 @@ def test_install_leaves_unset_arguments_alone(tmp_path):
     first = str(tmp_path / "first.sqlite3")
     install(engine="sqlite", sqlite_file=first)
     install(refresh_hooks=False)  # no settings at all
-    assert conf.models.engine == "sqlite"
-    assert conf.models.sqlite_file == first
+    assert conf.models.databases["default"] == {"engine": "sqlite", "sqlite_file": first}
 
 
 def test_install_wires_the_refresh_hooks():

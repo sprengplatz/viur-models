@@ -56,25 +56,32 @@ def resolve_url(
 ) -> str:
     """Database URL for this run, most explicit first: ``-x url=…`` (``x_args``),
     ``$VIUR_MODELS_DSN``, the configured engine, the ``conf.models`` preset, ``fallback_url``,
-    ``sqlalchemy.url`` from ``alembic.ini``. ``RuntimeError`` when none applies."""
+    ``sqlalchemy.url`` from ``alembic.ini``. ``-x db=<name>`` selects a non-default database
+    (engine or ``conf.models.databases`` entry only). ``RuntimeError`` when none applies."""
     import os
-
-    if x_args and (url := (x_args.get("url") or "").strip()):
-        return url
-    if url := os.environ.get(DSN_ENV_VAR, "").strip():
-        return url
 
     from . import db
 
+    database = _database(x_args)
+    if x_args and (url := (x_args.get("url") or "").strip()):
+        return url
+    if database == db.DEFAULT and (url := os.environ.get(DSN_ENV_VAR, "").strip()):
+        return url
+
     try:
-        engine = db.get_engine()
+        engine = db.get_engine(database)
     except RuntimeError:
         pass
     else:
         return str(engine.url.render_as_string(hide_password=False))
 
     # a set but misconfigured preset must surface: no try/except here
-    if (cfg := _models_conf()) is not None and cfg.engine:
+    cfg = _models_conf()
+    if database != db.DEFAULT:
+        if cfg is None:
+            raise RuntimeError(f"No engine {database!r} and conf.models is not installed")
+        return db.url_from_conf(database)
+    if cfg is not None and db.DEFAULT in cfg.databases:
         return db.url_from_conf()
 
     if fallback_url and fallback_url.strip():
@@ -91,11 +98,31 @@ def resolve_url(
     )
 
 
+def _database(x_args: dict | None) -> str:
+    from . import db
+
+    return ((x_args or {}).get("db") or "").strip() or db.DEFAULT
+
+
 def include_object(
     obj: t.Any, name: str | None, type_: str, reflected: bool, compare_to: t.Any,
 ) -> bool:
     """Autogenerate filter: everything but ``alembic_version``. Wrap it to exclude foreign tables."""
     return not (type_ == "table" and name == "alembic_version")
+
+
+def include_object_for(database: str) -> t.Callable:
+    """``include_object`` restricted to the tables of ``database`` (``db.tables_for``)."""
+    from . import db
+
+    names = {table.name for table in db.tables_for(database)}
+
+    def _include(obj: t.Any, name: str | None, type_: str, reflected: bool, compare_to: t.Any) -> bool:
+        if type_ == "table" and name not in names:
+            return False
+        return include_object(obj, name, type_, reflected, compare_to)
+
+    return _include
 
 
 def render_item(type_: str, obj: t.Any, autogen_context: t.Any) -> t.Any:
@@ -114,11 +141,11 @@ def render_item(type_: str, obj: t.Any, autogen_context: t.Any) -> t.Any:
     return f"sa.{impl!r}"
 
 
-def _configure_kwargs(url: str, **overrides: t.Any) -> dict:
+def _configure_kwargs(url: str, database: str = "default", **overrides: t.Any) -> dict:
     """Shared ``context.configure`` kwargs: ``compare_type`` on, ``render_as_batch`` on SQLite."""
     kwargs = {
         "target_metadata": target_metadata(),
-        "include_object": include_object,
+        "include_object": include_object_for(database),
         "render_item": render_item,
         "process_revision_directives": process_revision_directives,
         "compare_type": True,
@@ -128,16 +155,16 @@ def _configure_kwargs(url: str, **overrides: t.Any) -> dict:
     return kwargs
 
 
-def run_offline(url: str, **overrides: t.Any) -> None:
+def run_offline(url: str, database: str = "default", **overrides: t.Any) -> None:
     """``--sql`` mode."""
     context.configure(url=url, literal_binds=True,
                       dialect_opts={"paramstyle": "named"},
-                      **_configure_kwargs(url, **overrides))
+                      **_configure_kwargs(url, database, **overrides))
     with context.begin_transaction():
         context.run_migrations()
 
 
-def run_online(url: str, config: "Config", **overrides: t.Any) -> None:
+def run_online(url: str, config: "Config", database: str = "default", **overrides: t.Any) -> None:
     """Connect and run the migrations in one transaction."""
     section = config.get_section(config.config_ini_section) or {}
     section["sqlalchemy.url"] = url
@@ -146,25 +173,23 @@ def run_online(url: str, config: "Config", **overrides: t.Any) -> None:
     )
     connection: "Connection"
     with engine.connect() as connection:
-        context.configure(connection=connection, **_configure_kwargs(url, **overrides))
+        context.configure(connection=connection, **_configure_kwargs(url, database, **overrides))
         with context.begin_transaction():
             context.run_migrations()
     engine.dispose()
 
 
 def run(*, fallback_url: str | None = None, **overrides: t.Any) -> str:
-    """``env.py`` entry point: resolve the URL, dispatch offline/online; ``overrides`` go to
-    ``context.configure``. Returns the URL."""
+    """``env.py`` entry point: resolve the URL (``-x db=<name>`` picks the database), dispatch
+    offline/online; ``overrides`` go to ``context.configure``. Returns the URL."""
     config = context.config
-    url = resolve_url(
-        config,
-        x_args=context.get_x_argument(as_dictionary=True),
-        fallback_url=fallback_url,
-    )
+    x_args = context.get_x_argument(as_dictionary=True)
+    url = resolve_url(config, x_args=x_args, fallback_url=fallback_url)
+    database = _database(x_args)
     if context.is_offline_mode():
-        run_offline(url, **overrides)
+        run_offline(url, database, **overrides)
     else:
-        run_online(url, config, **overrides)
+        run_online(url, config, database, **overrides)
     return url
 
 

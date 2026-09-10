@@ -17,9 +17,9 @@ def test_install_config_attaches_to_real_conf():
         assert isinstance(cfg, ModelsConfig)
         assert conf.models is cfg
         # idempotent: values set between calls survive
-        cfg.engine = "memory"
+        cfg.databases["default"] = {"engine": "memory"}
         assert install_config() is cfg
-        assert conf.models.engine == "memory"
+        assert conf.models.databases["default"] == {"engine": "memory"}
     finally:
         delattr(conf, "models")
 
@@ -27,7 +27,7 @@ def test_install_config_attaches_to_real_conf():
 def test_memory_preset_builds_engine_on_real_conf():
     cfg = install_config()
     try:
-        cfg.engine = "memory"
+        cfg.databases["default"] = {"engine": "memory"}
         engine = db.configure_from_conf()
         assert engine.url.render_as_string() == "sqlite://"
     finally:

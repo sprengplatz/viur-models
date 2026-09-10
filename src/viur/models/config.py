@@ -1,27 +1,15 @@
-"""The ``conf.models`` namespace and its engine presets."""
+"""The ``conf.models`` namespace."""
 from __future__ import annotations
-
-import typing as t
 
 
 class ModelsConfig:
     """``conf.models.*`` namespace owned by viur-models."""
 
-    #: Engine preset: ``"memory"``, ``"sqlite"``, ``"postgres"`` or ``"bigquery"``.
-    engine: t.Any = None
-
-    #: SQLite file path for the ``"sqlite"`` preset.
-    sqlite_file: str = "viur_models.sqlite3"
-
-    #: DSN for ``"postgres"`` (``postgresql+pg8000://user:pw@host:5432/db``).
-    postgres_dsn: str = ""
-
-    #: DSN for ``"bigquery"`` (``bigquery://project/dataset``), ADC credentials.
-    bigquery_dsn: str = ""
-
     def __init__(self) -> None:
-        #: Extra ``create_engine`` kwargs (instance attribute).
-        self.engine_options: dict = {}
+        #: Databases by name (``Model.viur_database``, ``"default"`` required). Entry keys:
+        #: ``engine`` (``"memory"`` | ``"sqlite"`` | ``"postgres"`` | ``"bigquery"``),
+        #: ``sqlite_file``, ``postgres_dsn``, ``bigquery_dsn``, ``engine_options``, or ``url``.
+        self.databases: dict[str, dict] = {}
 
 
 def install_config() -> ModelsConfig:

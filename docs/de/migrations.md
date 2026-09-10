@@ -105,6 +105,11 @@ vollem Pfad (`sqlmodel.sql.sqltypes.AutoString(length=50)`).
 Ein *fehlkonfiguriertes* Preset (`postgres` ohne DSN) wirft, statt
 durchzufallen.
 
+`alembic -x db=<name>` migriert eine weitere Datenbank aus
+`conf.models.databases`: URL aus deren Engine bzw. Eintrag (1 gilt weiterhin,
+2, 5 und 6 nicht), Autogenerate nur über die Tabellen ihrer Models. Jede
+Datenbank braucht ein eigenes Alembic-Verzeichnis.
+
 ## Die erste Revision
 
 Ein frisch erzeugtes Scaffold bekommt eine autogenerierte Revision, sofort

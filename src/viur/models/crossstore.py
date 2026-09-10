@@ -175,7 +175,7 @@ def refresh_crossstore(*model_classes: type, missing: str = "keep") -> dict:
         if not json_fields and not link_relations:
             continue
 
-        with get_session() as session:
+        with get_session(model_cls) as session:
             if json_fields:
                 for row in session.exec(select(model_cls)).all():
                     changed = False
@@ -323,20 +323,30 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
     via ``key``. ``missing`` as in ``refresh_crossstore``. Called by the refresh hooks."""
     from sqlmodel import select
 
-    from .db import get_session
+    from .db import engine_names
 
     if missing not in ("keep", "set_null"):
         raise ValueError('missing must be "keep" or "set_null"')
 
     stats = {"checked": 0, "refreshed": 0, "cleared": 0}
+    for database in engine_names():
+        _refresh_in(database, key, missing, stats)
+    return stats
+
+
+def _refresh_in(database: str, key: str, missing: str, stats: dict) -> None:
+    """``refresh_for_target`` within one database: its index rows and link tables."""
+    from sqlmodel import select
+
+    from .db import database_of, get_session
+
     read = _dest_reader()
     models_by_table = {
         cls._viur_kind(): cls
         for cls in MODEL_REGISTRY
         if getattr(cls, "__table__", None) is not None
     }
-
-    with get_session() as session:
+    with get_session(database) as session:
         index_rows = session.exec(
             select(CrossStoreIndex).where(CrossStoreIndex.target_key == key),
         ).all()
@@ -379,7 +389,8 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
             session.add(row)
 
         for link_cls in LINK_REGISTRY:
-            if getattr(link_cls, "__table__", None) is None:
+            if getattr(link_cls, "__table__", None) is None \
+                    or database_of(link_cls) != database:
                 continue
             marker = link_cls.viur_marker()
             for link in session.exec(select(link_cls).where(link_cls.key == key)).all():
@@ -393,8 +404,6 @@ def refresh_for_target(key: str, *, missing: str = "keep") -> dict:
                     link.dest = fresh
                     session.add(link)
                     stats["refreshed"] += 1
-
-    return stats
 
 
 def install_refresh_hooks(*, missing_on_delete: str = "set_null", countdown: int = 10) -> None:

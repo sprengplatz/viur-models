@@ -27,17 +27,14 @@ def test_install_config_attaches_namespace():
     cfg = install_config()
     assert conf.models is cfg
     assert isinstance(cfg, ModelsConfig)
-    assert cfg.engine is None
-    assert cfg.sqlite_file == "viur_models.sqlite3"
-    assert cfg.postgres_dsn == ""
-    assert cfg.engine_options == {}
+    assert cfg.databases == {}
 
 
 def test_install_config_is_idempotent():
     cfg = install_config()
-    cfg.engine = "memory"
+    cfg.databases["default"] = {"engine": "memory"}
     assert install_config() is cfg
-    assert conf.models.engine == "memory"
+    assert conf.models.databases == {"default": {"engine": "memory"}}
 
 
 def test_install_config_replaces_foreign_attribute():
@@ -47,26 +44,29 @@ def test_install_config_replaces_foreign_attribute():
     assert conf.models is cfg
 
 
-def test_engine_options_not_shared_between_instances():
+def test_databases_not_shared_between_instances():
     first = ModelsConfig()
-    first.engine_options["echo"] = True
-    assert ModelsConfig().engine_options == {}
+    first.databases["default"] = {"engine": "memory"}
+    assert ModelsConfig().databases == {}
 
 
-def test_unconfigured_preset_fails_fast():
+def test_unconfigured_default_fails_fast():
     install_config()
-    with pytest.raises(RuntimeError, match="conf.models.engine"):
+    with pytest.raises(RuntimeError, match="no entry 'default'"):
+        db.configure_from_conf()
+    install_config().databases["default"] = {}
+    with pytest.raises(RuntimeError, match="conf.models.databases"):
         db.configure_from_conf()
 
 
 def test_unknown_preset_fails_fast():
-    install_config().engine = "oracle"
+    install_config().databases["default"] = {"engine": "oracle"}
     with pytest.raises(RuntimeError, match="'oracle'"):
         db.configure_from_conf()
 
 
 def test_memory_preset_shares_one_database_across_sessions():
-    install_config().engine = "memory"
+    install_config().databases["default"] = {"engine": "memory"}
     engine = db.configure_from_conf()
     assert engine.url.render_as_string() == "sqlite://"
     assert isinstance(engine.pool, StaticPool)
@@ -79,17 +79,13 @@ def test_memory_preset_shares_one_database_across_sessions():
 
 
 def test_memory_preset_respects_engine_option_overrides():
-    cfg = install_config()
-    cfg.engine = "memory"
-    cfg.engine_options = {"poolclass": NullPool}
+    install_config().databases["default"] = {"engine": "memory", "engine_options": {"poolclass": NullPool}}
     engine = db.configure_from_conf()
     assert isinstance(engine.pool, NullPool)
 
 
 def test_sqlite_preset_uses_configured_file(tmp_path):
-    cfg = install_config()
-    cfg.engine = "sqlite"
-    cfg.sqlite_file = str(tmp_path / "probe.sqlite3")
+    install_config().databases["default"] = {"engine": "sqlite", "sqlite_file": str(tmp_path / "probe.sqlite3")}
     engine = db.configure_from_conf()
     assert engine.url.database == str(tmp_path / "probe.sqlite3")
     assert engine.url.drivername == "sqlite"
@@ -97,7 +93,7 @@ def test_sqlite_preset_uses_configured_file(tmp_path):
 
 
 def test_postgres_preset_requires_dsn():
-    install_config().engine = "postgres"
+    install_config().databases["default"] = {"engine": "postgres"}
     with pytest.raises(RuntimeError, match="postgres_dsn"):
         db.configure_from_conf()
 
@@ -113,13 +109,13 @@ def test_postgres_preset_passes_dsn_and_options_through(monkeypatch):
         return "engine-sentinel"
 
     monkeypatch.setattr(db, "configure", fake_configure)
-    cfg = install_config()
-    cfg.engine = "postgres"
-    cfg.postgres_dsn = "postgresql+pg8000://user:pw@10.0.0.1:5432/app"
-    cfg.engine_options = {"creator": _fake_creator, "echo": True}
+    install_config().databases["default"] = {
+        "engine": "postgres", "postgres_dsn": "postgresql+pg8000://user:pw@10.0.0.1:5432/app",
+        "engine_options": {"creator": _fake_creator, "echo": True},
+    }
     assert db.configure_from_conf() == "engine-sentinel"
     assert calls["url"] == "postgresql+pg8000://user:pw@10.0.0.1:5432/app"
-    assert calls["kwargs"] == {"creator": _fake_creator, "echo": True}
+    assert calls["kwargs"] == {"creator": _fake_creator, "echo": True, "name": "default"}
 
 
 def _fake_creator():  # pragma: no cover - never called, only passed through

@@ -8,14 +8,12 @@ import typing as t
 from sqlmodel import SQLModel
 
 from .config import install_config
+from . import db
 from .db import configure_from_conf, get_engine, schema_revision
 from .scaffold import generate as generate_scaffold
 
 if t.TYPE_CHECKING:  # pragma: no cover
     from sqlalchemy.engine import Engine
-
-#: ``conf.models`` attributes ``install`` sets, in argument order.
-CONF_SETTINGS = ("engine", "sqlite_file", "postgres_dsn", "bigquery_dsn", "engine_options")
 
 logger = logging.getLogger(__name__)
 
@@ -27,26 +25,33 @@ def install(
     postgres_dsn: str | None = None,
     bigquery_dsn: str | None = None,
     engine_options: dict | None = None,
+    databases: dict[str, dict] | None = None,
     refresh_hooks: bool = True,
     **refresh_hook_kwargs: t.Any,
 ) -> "Engine":
-    """Attach ``conf.models``, apply the settings, build the engine, install the
+    """Attach ``conf.models``, apply the settings, build the engines, install the
     refresh hooks. Once, before ``core.setup()``. ``None`` leaves a setting untouched.
 
-    :param engine: Preset ``"memory"`` / ``"sqlite"`` / ``"postgres"`` / ``"bigquery"``.
+    :param engine: Preset of the default database: ``"memory"`` / ``"sqlite"`` / ``"postgres"``
+        / ``"bigquery"``. The flat arguments are the ``databases["default"]`` entry.
     :param engine_options: Extra ``create_engine`` kwargs.
+    :param databases: Entries for ``conf.models.databases`` (merged by name).
     :param refresh_hooks: ``False`` skips ``install_refresh_hooks``.
     :param refresh_hook_kwargs: Passed to ``install_refresh_hooks``.
     """
     from .crossstore import install_refresh_hooks
 
     config = install_config()
-    for name, value in zip(
-        CONF_SETTINGS,
-        (engine, sqlite_file, postgres_dsn, bigquery_dsn, engine_options),
-    ):
-        if value is not None:
-            setattr(config, name, value)
+    for name, entry in (databases or {}).items():
+        config.databases.setdefault(name, {}).update(entry)
+    default = {
+        key: value for key, value in (
+            ("engine", engine), ("sqlite_file", sqlite_file), ("postgres_dsn", postgres_dsn),
+            ("bigquery_dsn", bigquery_dsn), ("engine_options", engine_options),
+        ) if value is not None
+    }
+    if default:
+        config.databases.setdefault(db.DEFAULT, {}).update(default)
 
     sql_engine = configure_from_conf()
 
@@ -72,42 +77,52 @@ def setup(
     initial_revision: bool = True,
     **scaffold_kwargs: t.Any,
 ) -> str | None:
-    """Report the schema revision; after ``core.setup()``. Memory preset: ``create_all``.
-    ``migrations`` generates the missing Alembic scaffold (dev server only) and, if it
-    generated any, the first revision.
+    """Report the schema revision of every configured database; after ``core.setup()``.
+    Memory preset: ``create_all`` of that database's tables. ``migrations`` generates the
+    missing Alembic scaffold (dev server only) and, if it generated any, the first revision.
 
-    :param engine: Engine to inspect (default: the configured one).
+    :param engine: Engine to inspect instead of the configured ones.
     :param migrations: Directory for ``alembic.ini`` + ``migrations/``; ``None`` generates nothing.
     :param initial_revision: ``False`` leaves the first revision to the developer.
     :param scaffold_kwargs: Passed to ``scaffold.generate``.
-    :returns: Stamped revision, or ``None`` (memory preset / unmigrated).
+    :returns: Stamped revision of the default database, or ``None`` (memory preset / unmigrated).
     """
     if migrations is not None and _ensure_scaffold(migrations, **scaffold_kwargs) \
             and initial_revision:
         _bootstrap_revision(migrations)
 
-    engine = engine or get_engine()
-    preset = getattr(install_config(), "engine", None)
+    if engine is not None:
+        return _setup_database(db.DEFAULT, engine)
+    if not SQLModel.metadata.tables:
+        logger.warning(
+            "viur-models: setup() found an empty SQLModel.metadata — no "
+            "model was imported yet, so the in-memory database stays "
+            "empty. Call setup() after core.setup()."
+        )
+    revisions = {name: _setup_database(name, get_engine(name)) for name in db.engine_names()}
+    return revisions.get(db.DEFAULT)
 
-    if preset == "memory":
-        if not SQLModel.metadata.tables:
-            logger.warning(
-                "viur-models: setup() found an empty SQLModel.metadata — no "
-                "model was imported yet, so the in-memory database stays "
-                "empty. Call setup() after core.setup()."
-            )
-        SQLModel.metadata.create_all(engine)
+
+def _setup_database(name: str, engine: "Engine") -> str | None:
+    if _preset(name) == "memory":
+        SQLModel.metadata.create_all(engine, tables=db.tables_for(name))
         return None
-
     revision = schema_revision(engine)
     if revision is None:
         logger.error(
-            "viur-models: the SQL schema is not migrated (no alembic_version "
-            "table). Run `alembic upgrade head` where alembic.ini lives."
+            "viur-models: the SQL schema of %r is not migrated (no alembic_version "
+            "table). Run `alembic upgrade head` where alembic.ini lives.", name,
         )
     else:
-        logger.info("viur-models: SQL schema at revision %s", revision)
+        logger.info("viur-models: SQL schema of %r at revision %s", name, revision)
     return revision
+
+
+def _preset(name: str) -> str | None:
+    try:
+        return db.preset_from_conf(name)
+    except RuntimeError:  # engine configured by hand, no conf entry
+        return None
 
 
 def _ensure_scaffold(root: str | os.PathLike, **scaffold_kwargs: t.Any) -> list[str]:

@@ -151,6 +151,17 @@ class Record(SQLModel):
         return copy.deepcopy(cls._viur_structure_shared())
 
 
+def _check_relation_databases(cls: type, relations: dict) -> None:
+    """Relation targets and link tables must live in ``cls.viur_database`` (no cross-database FK)."""
+    for name, info in relations.items():
+        for other in (info["target"], info.get("link")):
+            if other is not None and getattr(other, "viur_database", "default") != cls.viur_database:
+                raise TypeError(
+                    f"{cls.__name__}.{name}: {other.__name__} lives in database "
+                    f"{other.viur_database!r}, {cls.__name__} in {cls.viur_database!r}"
+                )
+
+
 class Model(SQLModel):
     """Base for SQL-backed models. The structure is built at class definition (unmappable types
     fail fast) and cached per class."""
@@ -164,6 +175,10 @@ class Model(SQLModel):
     #: Bones always included when a client bonelist restricts a response (``"*"``-subskel
     #: analogue); ``key`` always is.
     viur_bones_always: t.ClassVar[tuple[str, ...]] = ()
+
+    #: Engine name (``viur.models.db.configure(..., name=)``); relation targets and link
+    #: tables must share it.
+    viur_database: t.ClassVar[str] = "default"
 
     id: int | None = SQLModelField(default=None, primary_key=True)
     creationdate: datetime | None = Field(
@@ -218,7 +233,9 @@ class Model(SQLModel):
     def viur_relations(cls) -> dict:
         """Relations per ``relations_for_model``, cached."""
         if "_viur_relations" not in cls.__dict__:
-            cls._viur_relations = relations_for_model(cls)
+            relations = relations_for_model(cls)
+            _check_relation_databases(cls, relations)
+            cls._viur_relations = relations
         return cls._viur_relations
 
     @classmethod

@@ -1,4 +1,4 @@
-"""Shared engine, one session per action, ``RecordJSON`` column type."""
+"""Named engines (``Model.viur_database``), one session per action, ``RecordJSON`` column type."""
 import typing as t
 from contextlib import contextmanager
 
@@ -10,49 +10,83 @@ from sqlmodel import Session, SQLModel, create_engine
 if t.TYPE_CHECKING:  # pragma: no cover
     from sqlalchemy.engine import Engine
 
-_engine: "Engine | None" = None
+DEFAULT = "default"
+
+_engines: dict[str, "Engine"] = {}
+
+#: A database name, a model class (``viur_database``) or ``None`` (default).
+Target = t.Union[str, type, None]
 
 
-def configure(engine_or_url: "Engine | str", **create_engine_kwargs: t.Any) -> "Engine":
-    """Set the shared engine from a URL (``NullPool`` default) or a ready engine. Once, at boot."""
-    global _engine
+def database_of(target: Target) -> str:
+    if target is None:
+        return DEFAULT
+    if isinstance(target, str):
+        return target
+    return getattr(target, "viur_database", DEFAULT)
+
+
+def configure(
+    engine_or_url: "Engine | str", *, name: str = DEFAULT, **create_engine_kwargs: t.Any,
+) -> "Engine":
+    """Register the engine ``name`` from a URL (``NullPool`` default) or a ready engine. At boot."""
     if isinstance(engine_or_url, str):
         create_engine_kwargs.setdefault("poolclass", NullPool)
-        _engine = create_engine(engine_or_url, **create_engine_kwargs)
+        engine = create_engine(engine_or_url, **create_engine_kwargs)
     else:
-        _engine = engine_or_url
-    if _engine.dialect.name == "bigquery":
+        engine = engine_or_url
+    if engine.dialect.name == "bigquery":
         import logging
 
         from .bigquery import apply_engine_workarounds
 
-        for note in apply_engine_workarounds(_engine):
+        for note in apply_engine_workarounds(engine):
             logging.getLogger(__name__).warning("viur-models[bigquery]: %s", note)
-    return _engine
+    _engines[name] = engine
+    return engine
 
 
-def get_engine() -> "Engine":
-    if _engine is None:
+def get_engine(target: Target = None) -> "Engine":
+    name = database_of(target)
+    if (engine := _engines.get(name)) is None:
         raise RuntimeError(
-            "viur.models.db is not configured — call "
-            "viur.models.db.configure(<database url or engine>) once at app "
-            "boot (next to viur.actions.install())."
+            f"viur.models.db has no engine {name!r} — call "
+            f"viur.models.db.configure(<database url or engine>, name={name!r}) once "
+            "at app boot (next to viur.actions.install())."
         )
-    return _engine
+    return engine
+
+
+def engine_names() -> tuple[str, ...]:
+    return tuple(_engines)
+
+
+def tables_for(target: Target) -> list[t.Any]:
+    """Tables of ``target``'s database: those of models bound to it plus every table
+    without a ``viur_database`` owner (viur-models' internal tables, present in each database)."""
+    name = database_of(target)
+    owners = {
+        mapper.local_table: mapper.class_
+        for mapper in SQLModel._sa_registry.mappers
+    }
+    return [
+        table for table in SQLModel.metadata.tables.values()
+        if not hasattr(owners.get(table), "viur_database")
+        or database_of(owners[table]) == name
+    ]
 
 
 def reset() -> None:
-    """Dispose and drop the engine (test isolation)."""
-    global _engine
-    if _engine is not None:
-        _engine.dispose()
-    _engine = None
+    """Dispose and drop every engine (test isolation)."""
+    for engine in _engines.values():
+        engine.dispose()
+    _engines.clear()
 
 
 @contextmanager
-def get_session() -> t.Iterator[Session]:
+def get_session(target: Target = None) -> t.Iterator[Session]:
     """Commit on success, rollback on error. ``expire_on_commit=False`` — instances stay readable after close."""
-    session = Session(get_engine(), expire_on_commit=False)
+    session = Session(get_engine(target), expire_on_commit=False)
     try:
         yield session
         session.commit()
@@ -121,46 +155,66 @@ def url_from_preset(
     if engine == "postgres":
         if not postgres_dsn:
             raise RuntimeError(
-                'engine "postgres" needs a DSN (conf.models.postgres_dsn, '
+                'engine "postgres" needs a DSN (postgres_dsn, '
                 'e.g. "postgresql+pg8000://user:pw@host:5432/db")'
             )
         return postgres_dsn
     if engine == "bigquery":
         if not bigquery_dsn:
             raise RuntimeError(
-                'engine "bigquery" needs a DSN (conf.models.bigquery_dsn, '
+                'engine "bigquery" needs a DSN (bigquery_dsn, '
                 'e.g. "bigquery://my-project/my_dataset") — see '
                 "viur.models.bigquery for the backend's compromises"
             )
         return bigquery_dsn
     raise RuntimeError(
         'engine must be "memory", "sqlite", "postgres" or "bigquery" '
-        f"(got {engine!r}) — set conf.models.engine before building the engine"
+        f"(got {engine!r}) — set it in conf.models.databases before building the engine"
     )
 
 
-def url_from_conf() -> str:
-    """The database URL of the current ``conf.models`` preset."""
+def _settings(name: str) -> dict:
     from .config import install_config
 
-    cfg = install_config()
+    if (settings := install_config().databases.get(name)) is None:
+        raise RuntimeError(f"conf.models.databases has no entry {name!r}")
+    return settings
+
+
+def url_from_conf(name: str = DEFAULT) -> str:
+    """Database URL of a ``conf.models`` preset (``url`` entries pass through)."""
+    settings = _settings(name)
+    if url := settings.get("url"):
+        return url
     return url_from_preset(
-        cfg.engine, sqlite_file=cfg.sqlite_file, postgres_dsn=cfg.postgres_dsn,
-        bigquery_dsn=getattr(cfg, "bigquery_dsn", ""),
+        settings.get("engine"),
+        sqlite_file=settings.get("sqlite_file", "viur_models.sqlite3"),
+        postgres_dsn=settings.get("postgres_dsn", ""),
+        bigquery_dsn=settings.get("bigquery_dsn", ""),
     )
+
+
+def preset_from_conf(name: str = DEFAULT) -> str | None:
+    return _settings(name).get("engine")
+
+
+def _configure_preset(name: str) -> "Engine":
+    from sqlalchemy.pool import StaticPool
+
+    settings = _settings(name)
+    options = dict(settings.get("engine_options") or {})
+    url = url_from_conf(name)
+    if settings.get("engine") == "memory":
+        options.setdefault("poolclass", StaticPool)  # one connection = one database
+        options.setdefault("connect_args", {"check_same_thread": False})
+    return configure(url, name=name, **options)
 
 
 def configure_from_conf() -> "Engine":
-    """Build the shared engine from the ``conf.models`` preset."""
-    from sqlalchemy.pool import StaticPool
-
+    """One engine per ``conf.models.databases`` entry. Returns the default engine."""
     from .config import install_config
 
-    cfg = install_config()
-    options = dict(cfg.engine_options)
-    url = url_from_conf()
-
-    if cfg.engine == "memory":
-        options.setdefault("poolclass", StaticPool)  # one connection = one database
-        options.setdefault("connect_args", {"check_same_thread": False})
-    return configure(url, **options)
+    engines = {name: _configure_preset(name) for name in install_config().databases}
+    if DEFAULT not in engines:
+        raise RuntimeError(f"conf.models.databases has no entry {DEFAULT!r}")
+    return engines[DEFAULT]

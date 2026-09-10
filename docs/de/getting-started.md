@@ -173,37 +173,41 @@ Die einzelnen Schritte bleiben verfügbar — `install()` bündelt sie nur:
 
 ```python
 viur.models.install_config()          # registriert conf.models (idempotent)
-conf.models.engine = "sqlite"
-conf.models.sqlite_file = "viur_models.sqlite3"
+conf.models.databases["default"] = {"engine": "sqlite", "sqlite_file": "viur_models.sqlite3"}
 viur.models.db.configure_from_conf()
 viur.models.install_refresh_hooks()
 ```
 
-## Die Presets in `conf.models`
+## `conf.models.databases`
 
-| Preset | Verbindung | Einsatz |
+Ein Eintrag pro Datenbank, `"default"` ist Pflicht. Die flachen
+`install()`-Argumente sind der `"default"`-Eintrag.
+
+| `engine` | Verbindung | Einsatz |
 |---|---|---|
 | `"memory"` | SQLite in-memory (`sqlite://`, eine geteilte Verbindung via `StaticPool`, damit alle Sessions dieselbe Datenbank sehen) | Tests, Demos |
-| `"sqlite"` | SQLite-Datei aus `conf.models.sqlite_file` | lokale Entwicklung |
-| `"postgres"` | DSN aus `conf.models.postgres_dsn`, z. B. `postgresql+pg8000://user:pw@host:5432/db` | Produktion |
-| `"bigquery"` | DSN aus `conf.models.bigquery_dsn` — siehe [BigQuery](bigquery.md) | analytische Daten |
+| `"sqlite"` | SQLite-Datei aus `sqlite_file` | lokale Entwicklung |
+| `"postgres"` | DSN aus `postgres_dsn`, z. B. `postgresql+pg8000://user:pw@host:5432/db` | Produktion |
+| `"bigquery"` | DSN aus `bigquery_dsn` — siehe [BigQuery](bigquery.md) | analytische Daten |
+| — | `url` direkt | alles andere |
 
 Für `"postgres"` muss das Treiber-Paket installiert sein (`pg8000` oder
 `psycopg`). Zusätzliche `create_engine`-Argumente laufen über
-`conf.models.engine_options` — auf App Engine z. B. der
-Cloud-SQL-Connector:
+`engine_options` — auf App Engine z. B. der Cloud-SQL-Connector:
 
 ```python
 from google.cloud.sql.connector import Connector
 
 connector = Connector()
-conf.models.engine = "postgres"
-conf.models.postgres_dsn = "postgresql+pg8000://"
-conf.models.engine_options = {
-    "creator": lambda: connector.connect(
-        "project:region:instance", "pg8000",
-        user="app", password="…", db="app",
-    ),
+conf.models.databases["default"] = {
+    "engine": "postgres",
+    "postgres_dsn": "postgresql+pg8000://",
+    "engine_options": {
+        "creator": lambda: connector.connect(
+            "project:region:instance", "pg8000",
+            user="app", password="…", db="app",
+        ),
+    },
 }
 viur.models.db.configure_from_conf()
 ```
@@ -211,7 +215,27 @@ viur.models.db.configure_from_conf()
 Der Pool-Default für URL-Verbindungen ist `NullPool`; das `memory`-Preset
 überschreibt ihn mit `StaticPool`. Beides lässt sich über
 `engine_options["poolclass"]` übersteuern. Ohne die conf ruft man
-`viur.models.db.configure(url_or_engine, **kwargs)` direkt auf.
+`viur.models.db.configure(url_or_engine, name=…, **kwargs)` direkt auf.
+
+## Mehrere Datenbanken
+
+Jedes Model wählt seine Engine über `viur_database` (Default `"default"`):
+
+```python
+viur.models.install(
+    engine="postgres", postgres_dsn="postgresql+pg8000://…",
+    databases={"analytics": {"engine": "bigquery", "bigquery_dsn": "bigquery://p/ds"}},
+)
+
+class PageView(BigQueryModel, table=True):
+    viur_database = "analytics"
+    ...
+```
+
+`SQLList`, Cross-Store-Index und Refresh-Hooks folgen dem Model; `setup()`
+berichtet jede Datenbank. Relationen und Link-Tabellen (`RelationLink.viur_database`)
+müssen in derselben Datenbank liegen wie das Model — sonst `TypeError` beim
+Aufbau der Structure. Migrationen pro Datenbank: `alembic -x db=analytics …`, siehe [Migrationen](migrations.md).
 
 ## Entwicklungsumgebung
 

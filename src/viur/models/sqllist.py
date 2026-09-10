@@ -108,9 +108,9 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
-def _ilike(column: t.Any, pattern: str) -> t.Any:
+def _ilike(column: t.Any, pattern: str, model_cls: type[Model]) -> t.Any:
     """Case-insensitive LIKE with backslash escaping; BigQuery's LIKE has no ``ESCAPE`` clause."""
-    if get_engine().dialect.name == "bigquery":
+    if get_engine(model_cls).dialect.name == "bigquery":
         return column.ilike(pattern)
     return column.ilike(pattern, escape="\\")
 
@@ -346,7 +346,7 @@ class SQLList(ActionModule, Module):
             if searchable:
                 pattern = f"%{_escape_like(str(term))}%"
                 stmt = stmt.where(or_(*[
-                    _ilike(column, pattern) for column in searchable
+                    _ilike(column, pattern, model_cls) for column in searchable
                 ]))
             else:
                 stmt = stmt.where(false())
@@ -382,7 +382,7 @@ class SQLList(ActionModule, Module):
                 stmt = stmt.where(column >= value)
             elif operator == "lk":
                 stmt = stmt.where(
-                    _ilike(column, f"{_escape_like(str(value))}%"),
+                    _ilike(column, f"{_escape_like(str(value))}%", model_cls),
                 )
             elif operator:  # unknown suffix: equality
                 stmt = stmt.where(column == value)
@@ -435,7 +435,7 @@ class SQLList(ActionModule, Module):
 
         stmt = self._restrict(stmt, model_cls, bones, extra=(orderby,) if orderby else ())
         stmt = self.sqlFilter(stmt).limit(limit + 1)
-        with get_session() as session:
+        with get_session(model_cls) as session:
             rows = list(session.exec(stmt).all())
 
         has_more = len(rows) > limit
@@ -453,7 +453,7 @@ class SQLList(ActionModule, Module):
         hooks = get_resolved_hooks(self, "view")
         model_cls = get_hook_method(self, hooks, "skel")()
         bones = _client_bones(model_cls._viur_structure_shared(), model_cls)
-        with get_session() as session:
+        with get_session(model_cls) as session:
             instance = self._load(model_cls, session, key, bones)
             self._check(hooks, instance)  # inside the session, like edit/delete
         if bones:
@@ -480,7 +480,7 @@ class SQLList(ActionModule, Module):
             instance.errors = client_errors
             return self.render.add(instance)
 
-        with get_session() as session:
+        with get_session(model_cls) as session:
             if relation_errors := self._verify_relations(model_cls, instance, session):
                 instance.errors = relation_errors
                 return self.render.add(instance)  # unknown relation target
@@ -517,7 +517,7 @@ class SQLList(ActionModule, Module):
             if name in editable and info["fk"] is not None
         ]
 
-        with get_session() as session:
+        with get_session(model_cls) as session:
             instance = self._load(model_cls, session, key)
             self._check(hooks, instance)
 
@@ -578,7 +578,7 @@ class SQLList(ActionModule, Module):
         self._require_v2_render()
         hooks = get_resolved_hooks(self, "delete")
         model_cls = get_hook_method(self, hooks, "skel")()
-        with get_session() as session:
+        with get_session(model_cls) as session:
             instance = self._load(model_cls, session, key)
             self._check(hooks, instance)
             get_hook_method(self, hooks, "on")(instance)  # onDelete
